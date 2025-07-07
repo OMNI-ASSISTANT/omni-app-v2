@@ -1,0 +1,14 @@
+google-genai
+python-dotenv
+opencv-python
+PyAudio
+numpy
+livekit
+Pillow
+mss
+taskgroup
+exceptiongroup
+yt-dlp
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib 
