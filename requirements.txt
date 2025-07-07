@@ -1,7 +1,8 @@
 google-genai
 python-dotenv
 opencv-python
-PyAudio
+# pyaudio   ← gone
+livekit-rtc
 numpy
 livekit
 Pillow

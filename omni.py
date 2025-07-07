@@ -36,7 +36,10 @@ sys.stdout.reconfigure(line_buffering=True)  # For Python 3.7+
 
 # Import required libraries
 import cv2
-import pyaudio
+try:
+    import pyaudio            # ← local dev only
+except ModuleNotFoundError:
+    pyaudio = None            # cloud build will skip audio-in/out
 import numpy as np
  # switched to LiveKit's cross‑platform AEC that ships pre‑built wheels 🚀
 from livekit.rtc.apm import AudioProcessingModule as APM
@@ -57,12 +60,13 @@ if sys.version_info < (3, 11, 0):
     asyncio.ExceptionGroup = exceptiongroup.ExceptionGroup
 
 # Audio configuration constants
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-SEND_SAMPLE_RATE = 24000 # Matched with RECEIVE_SAMPLE_RATE
-RECEIVE_SAMPLE_RATE = 24000
- # 10 ms of mono‑16‑bit samples at 24 kHz → 240 samples
-CHUNK_SIZE = 240
+if pyaudio:
+    FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    SEND_SAMPLE_RATE = 24000 # Matched with RECEIVE_SAMPLE_RATE
+    RECEIVE_SAMPLE_RATE = 24000
+    # 10 ms of mono‑16‑bit samples at 24 kHz → 240 samples
+    CHUNK_SIZE = 240
 
 # --- LiveKit APM: echo cancellation + NS + AGC ---
 AEC_PROCESSOR = APM(
@@ -402,7 +406,8 @@ function_handlers = {
     "__default__": lambda name, params: {"error": f"Function '{name}' not implemented."},
 }
 
-pya = pyaudio.PyAudio()
+if pyaudio:
+    pya = pyaudio.PyAudio()
 
 class AudioLoop:
     def __init__(self):
@@ -760,9 +765,11 @@ class AudioLoop:
                 # Always create these core tasks
                 send_text_task = tg.create_task(self.send_text())
                 tg.create_task(self.send_realtime())
-                tg.create_task(self.listen_audio())
+                if pyaudio:
+                    tg.create_task(self.listen_audio())
+                    tg.create_task(self.play_audio())
+
                 tg.create_task(self.receive_audio())
-                tg.create_task(self.play_audio())
                 
                 # Add the mode change checker task
                 tg.create_task(self.check_mode_changes())
