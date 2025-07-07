@@ -1,6 +1,15 @@
-FROM python:3.12-slim   # Start with official Python image
-WORKDIR /app            # cd /app
-COPY requirements.txt . # bring in deps list
-RUN pip install -r requirements.txt  # bake them in
-COPY . .                # copy your code
-CMD ["python", "omni.py"]  # run it when the container starts 
+# Start with official slim Python image
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency list and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of your code
+COPY . .
+
+# Default command
+CMD ["python", "omni.py"]
