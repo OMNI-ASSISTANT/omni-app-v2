@@ -67,7 +67,12 @@ if pyaudio:
     RECEIVE_SAMPLE_RATE = 24000
     # 10 ms of mono‑16‑bit samples at 24 kHz → 240 samples
     CHUNK_SIZE = 240
-
+    
+CHANNELS = 1
+SEND_SAMPLE_RATE = 24000
+RECEIVE_SAMPLE_RATE = 24000
+CHUNK_SIZE = 240          # 10 ms at 24 kHz mono
+BYTES_PER_SAMPLE = 2      # int16 -> 2 bytes
 # --- LiveKit APM: echo cancellation + NS + AGC ---
 AEC_PROCESSOR = APM(
     echo_cancellation=True,
@@ -421,9 +426,11 @@ class AudioLoop:
         self.aec = AEC_PROCESSOR
 
         self.far_end_buffer = asyncio.Queue(maxsize=10) # Buffer for far-end audio
-        self._silent_chunk = b'\x00' * CHUNK_SIZE * CHANNELS * pya.get_sample_size(FORMAT) # Precompute silent chunk
+        # inside AudioLoop.__init__
+        sample_width = BYTES_PER_SAMPLE        # always 2 bytes for int16
+        self._silent_chunk = b'\x00' * CHUNK_SIZE * CHANNELS * sample_width
 
-        # Store tasks so they can be canceled
+                # Store tasks so they can be canceled
         self.video_task = None
         self.current_mode = video_mode
         self.pending_mode_change = None  # Flag for pending mode changes
