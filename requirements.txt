@@ -1,9 +1,8 @@
 google-genai
 python-dotenv
 opencv-python
-livekit
+livekit>=1.6.0
 numpy
-livekit
 Pillow
 mss
 taskgroup

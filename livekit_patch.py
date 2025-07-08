@@ -1,6 +1,6 @@
 """LiveKit Audio Integration Patch
 ---------------------------------
-Drop‑in mixin that turns Omni’s local PyAudio loops into true
+Drop‑in mixin that turns Omni's local PyAudio loops into true
 cloud‑native WebRTC tracks. Import and call `enable_livekit()`
 right after creating your `AudioLoop` to attach:
 
@@ -13,7 +13,8 @@ Requires env vars:
 """
 
 import os, asyncio
-from livekit import rtc, tokens
+from livekit import rtc
+from livekit.api import auth
 from livekit.rtc.audio_frame import AudioFrame
 
 # ───────── Token helper ─────────
@@ -21,8 +22,8 @@ from livekit.rtc.audio_frame import AudioFrame
 def _build_token(identity: str = "omni-core", room: str = "omni") -> str:
     api_key = os.getenv("LK_API_KEY")
     api_secret = os.getenv("LK_API_SECRET")
-    grant = tokens.VideoGrant(room=room)
-    at = tokens.AccessToken(api_key, api_secret, identity=identity, grants=grant)
+    grant = auth.VideoGrant(room=room)
+    at = auth.AccessToken(api_key, api_secret, identity=identity, grants=grant)
     at.ttl = 3600  # 1 hour
     return at.to_jwt()
 
