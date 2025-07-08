@@ -2,6 +2,7 @@ google-genai
 python-dotenv
 opencv-python
 livekit
+livekit-server-sdk
 numpy
 Pillow
 mss
