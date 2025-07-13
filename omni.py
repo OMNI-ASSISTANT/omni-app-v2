@@ -22,9 +22,8 @@ import sys
 from typing import Annotated
 
 from dotenv import load_dotenv
-from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, Agent, AgentSession
+from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, Agent, AgentSession, RoomInputOptions
 from livekit.plugins import google
-
 # ───────── ENV & LOG ─────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -195,7 +194,7 @@ async def entrypoint(ctx: JobContext):
     )
 
     # Start the session
-    await session.start(room=ctx.room, agent=agent)
+    await session.start(room=ctx.room,room_input_options=RoomInputOptions(video_enabled=True), agent=agent)
     
     logger.info("Agent session started successfully")
 
