@@ -208,8 +208,8 @@ class OmniAgent(Agent):
             llm=google.beta.realtime.RealtimeModel(
                 # Default to a British-accent voice; override with OMNI_VOICE env var
                 voice=os.getenv("OMNI_VOICE", "Puck"),
-                # If supported by the plugin, set language/locale for TTS
-                language_code=os.getenv("OMNI_LANGUAGE", "en-GB"),
+                # Set BCP-47 language tag (e.g., en-GB) for STT/TTS
+                language=os.getenv("OMNI_LANGUAGE", "en-GB"),
             ),
         )
 
