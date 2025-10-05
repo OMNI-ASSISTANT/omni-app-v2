@@ -188,6 +188,27 @@ class OmniAgent(Agent):
         )
 
 
+def print_participant_info(participant, is_local=False):
+    """Print detailed participant information."""
+    prefix = "Local" if is_local else "Remote"
+    print(f"\n🔍 {prefix} Participant Details:")
+    print(f"  - SID: {participant.sid}")
+    print(f"  - Identity: {participant.identity}")
+    print(f"  - Name: {participant.name or 'No name set'}")
+    print(f"  - State: {getattr(participant, 'state', 'Unknown')}")
+    print(f"  - Kind: {getattr(participant, 'kind', 'Unknown')}")
+    print(f"  - Attributes: {getattr(participant, 'attributes', {}) or 'No attributes'}")
+    print(f"  - Metadata: {participant.metadata or 'No metadata'}")
+    print(f"  - Permissions: {getattr(participant, 'permissions', 'Unknown')}")
+    print(f"  - Track Publications: {len(participant.track_publications)}")
+    
+    # Print track information if available
+    if participant.track_publications:
+        print(f"  - Active Tracks:")
+        for track_sid, track_pub in participant.track_publications.items():
+            print(f"    * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
+    print("=" * 50)
+
 async def entrypoint(ctx: JobContext):
     """Main agent entry point called by LiveKit Agents framework."""
     logger.info("Starting Omni Agent with Gemini Live API")
@@ -195,56 +216,36 @@ async def entrypoint(ctx: JobContext):
     # Connect to the room first
     await ctx.connect()
     
-    # Print participant data
-    logger.info("=== PARTICIPANT DATA ===")
-    print("\n=== ROOM PARTICIPANTS ===")
+    # Set up event listeners for participant events
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(participant):
+        print(f"\n🎉 NEW PARTICIPANT JOINED THE ROOM!")
+        print_participant_info(participant, is_local=False)
+        
+    @ctx.room.on("participant_disconnected") 
+    def on_participant_disconnected(participant):
+        print(f"\n👋 PARTICIPANT LEFT THE ROOM!")
+        print_participant_info(participant, is_local=False)
+        
+    @ctx.room.on("track_published")
+    def on_track_published(publication, participant):
+        print(f"\n📡 NEW TRACK PUBLISHED!")
+        print(f"  - Participant: {participant.identity}")
+        print(f"  - Track: {publication.kind} - {publication.name or 'Unnamed'}")
+        print(f"  - Muted: {publication.muted}")
+        
+    @ctx.room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        print(f"\n🔊 SUBSCRIBED TO TRACK!")
+        print(f"  - Participant: {participant.identity}")
+        print(f"  - Track: {publication.kind} - {publication.name or 'Unnamed'}")
+        print(f"  - Track SID: {track.sid}")
     
-    # Print local participant info
+    # Print initial room state
+    logger.info("=== INITIAL ROOM STATE ===")
+    print(f"\n🏠 Room connected! Waiting for participants...")
     if ctx.room.local_participant:
-        local_p = ctx.room.local_participant
-        print(f"Local Participant:")
-        print(f"  - SID: {local_p.sid}")
-        print(f"  - Identity: {local_p.identity}")
-        print(f"  - Name: {local_p.name or 'No name set'}")
-        print(f"  - State: {getattr(local_p, 'state', 'Unknown')}")
-        print(f"  - Kind: {getattr(local_p, 'kind', 'Unknown')}")
-        print(f"  - Attributes: {getattr(local_p, 'attributes', {}) or 'No attributes'}")
-        print(f"  - Metadata: {local_p.metadata or 'No metadata'}")
-        print(f"  - Permissions: {getattr(local_p, 'permissions', 'Unknown')}")
-        print(f"  - Track Publications: {len(local_p.track_publications)}")
-        
-        # Print local tracks
-        if local_p.track_publications:
-            print(f"  - Local Tracks:")
-            for track_sid, track_pub in local_p.track_publications.items():
-                print(f"    * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
-        
-    # Print remote participants info
-    remote_participants = ctx.room.remote_participants
-    print(f"\nRemote Participants ({len(remote_participants)}):")
-    
-    for participant_sid, participant in remote_participants.items():
-        print(f"  Participant {participant_sid}:")
-        print(f"    - SID: {participant.sid}")
-        print(f"    - Identity: {participant.identity}")
-        print(f"    - Name: {participant.name or 'No name set'}")
-        print(f"    - State: {getattr(participant, 'state', 'Unknown')}")
-        print(f"    - Kind: {getattr(participant, 'kind', 'Unknown')}")
-        print(f"    - Attributes: {getattr(participant, 'attributes', {}) or 'No attributes'}")
-        print(f"    - Metadata: {participant.metadata or 'No metadata'}")
-        print(f"    - Permissions: {getattr(participant, 'permissions', 'Unknown')}")
-        print(f"    - Track Publications: {len(participant.track_publications)}")
-        
-        # Print track information if available
-        if participant.track_publications:
-            print(f"    - Tracks:")
-            for track_sid, track_pub in participant.track_publications.items():
-                print(f"      * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
-    
-    if not remote_participants:
-        print("  No remote participants currently connected")
-    
-    print("========================\n")
+        print_participant_info(ctx.room.local_participant, is_local=True)
     # Check if Google API key is available
     google_api_key = os.getenv("GOOGLE_API_KEY")
     if not google_api_key:
