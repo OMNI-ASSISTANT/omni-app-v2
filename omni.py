@@ -218,42 +218,33 @@ def get_participant_kind_name(kind):
 
 def update_agent_context(agent, participant_info):
     """Update the agent's system prompt with current participant context."""
-    base_instructions = """You are **Omni**, a hyper-proactive assistant with external tools.
-            • Think briefly before acting; be concise and helpful.
-            • Reply to the user in ≤ 2 sentences and suggest useful next steps when appropriate.
-            • Ask one clarifying question only if a critical detail is missing.
-            • Use tools proactively to help users accomplish their goals.
-            • For phone calls, ask for the number and confirm before calling.
-            • For web searches, use precise queries and suggest related topics.
-            • For video searches, use descriptive queries about visual content (e.g., "person holding bottle", "car driving", "window").
-            • Video searches extract key frames as images that I can see and analyze - perfect for understanding visual content!
-            • When users mention videos, proactively search to extract and analyze the visual frames.
-            • Always confirm destructive actions before proceeding."""
+    base_instructions = """You are **Omni**, a hyper-proactive assistant.
+*   Be concise and helpful.
+*   Reply in 2 sentences or less.
+*   Use your tools to help the user."""
     
     # Add participant context if available
-    if participant_info:
+    if participant_info and participant_info.get('name'):
+        user_name = participant_info['name']
         participant_context = f"""
-            
-            **CURRENT USER CONTEXT:**
-            • User Name: {participant_info.get('name', 'Not provided')}
-            • User Identity: {participant_info.get('identity', 'Unknown')}
-            • Connection State: {participant_info.get('state', 'Unknown')}
-            • User Type: {participant_info.get('kind_name', 'Standard User')}
-            • Has Audio: {participant_info.get('has_audio', False)}
-            • Has Video: {participant_info.get('has_video', False)}
-            
-            Use this context to personalize your responses and be more helpful! Address the user by their name when appropriate."""
-        base_instructions += participant_context
-        print(f"✅ Agent context updated for: {participant_info.get('name', 'Unknown')}")
+
+You are currently speaking with '{user_name}'. Address them by their name when it makes sense.
+Here is some info about them:
+- Identity: {participant_info.get('identity', 'Unknown')}
+- Has Audio: {participant_info.get('has_audio', False)}
+- Has Video: {participant_info.get('has_video', False)}"""
+        base_instructions = f"Hello! Your name is Omni and you are a helpful assistant. The user you are talking to is named {user_name}. Please be polite and helpful, and use their name when you can."
+        print(f"✅ Agent context updated for user: {user_name}")
     else:
-        print("✅ Agent context reset to default")
+        print("✅ Agent context reset to default. No user name available.")
     
     # Update the agent's instructions directly
     try:
         agent._instructions = base_instructions
-        print(f"🔄 System prompt updated successfully")
+        print(f"🔄 System prompt updated successfully. New prompt: '{base_instructions[:100]}...'")
     except Exception as e:
         print(f"⚠️ Failed to update agent context: {e}")
+
 
 def print_participant_info(participant, is_local=False):
     """Print detailed participant information."""
@@ -328,12 +319,13 @@ async def entrypoint(ctx: JobContext):
         
     @ctx.room.on("participant_attributes_changed")
     def on_participant_attributes_changed(changed_attributes, participant):
-        # Ignore attribute changes from the agent itself to avoid overwriting user context
-        if participant.sid == ctx.room.local_participant.sid:
-            print(f"ℹ️ Agent attributes changed: {changed_attributes}")
+        # The local participant is the agent itself. We must ignore its own attribute changes
+        # to avoid wiping the user's context from the system prompt.
+        if participant.identity == ctx.room.local_participant.identity:
+            print(f"ℹ️ Agent's own attributes changed: {changed_attributes}. Ignoring for context update.")
             return
 
-        print(f"\n📝 PARTICIPANT ATTRIBUTES CHANGED!")
+        print(f"\n📝 Remote participant attributes changed!")
         print(f"  - Participant: {participant.identity}")
         print(f"  - Changed attributes: {changed_attributes}")
         
@@ -347,6 +339,7 @@ async def entrypoint(ctx: JobContext):
             'has_video': any(pub.kind == 'video' for pub in participant.track_publications.values()),
             'attributes': getattr(participant, 'attributes', {})
         }
+        print(f"🤖 Re-updating Omni with new context for user: {participant_info['name']}")
         update_agent_context(agent, participant_info)
         
     @ctx.room.on("track_published")
@@ -374,7 +367,7 @@ async def entrypoint(ctx: JobContext):
 
     await session.start(
         room=ctx.room,
-        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False),
+        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False), 
         agent=agent
     )
     logger.info("Agent session started successfully")
