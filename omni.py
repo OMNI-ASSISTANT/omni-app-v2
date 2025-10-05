@@ -198,34 +198,37 @@ async def entrypoint(ctx: JobContext):
     logger.info("Starting Omni Agent with Gemini Live API")
     await ctx.connect()
 
-    # Create the initial agent and session
     agent = OmniAgent()
     session = AgentSession()
 
-    # Define event handlers to update the agent
-    @ctx.room.on("participant_connected")
-    async def on_participant_connected(participant):
+    def on_participant_connected(participant):
         print("\n🎉 NEW PARTICIPANT JOINED!")
         print_participant_info(participant)
-        
-        participant_info = {'name': participant.name or participant.identity}
-        new_agent = OmniAgent(participant_info=participant_info)
-        print(f"🤖 Updating agent context for {participant_info['name']}")
-        await session.update_agent(new_agent)
 
-    @ctx.room.on("participant_disconnected")
-    async def on_participant_disconnected(participant):
+        async def update_task():
+            participant_info = {'name': participant.name or participant.identity}
+            new_agent = OmniAgent(participant_info=participant_info)
+            print(f"🤖 Updating agent context for {participant_info['name']}")
+            await session.update_agent(new_agent)
+        
+        asyncio.create_task(update_task())
+
+    def on_participant_disconnected(participant):
         print("\n👋 PARTICIPANT LEFT!")
         print_participant_info(participant)
-        
-        print("🤖 Resetting agent to default state.")
-        await session.update_agent(OmniAgent())
 
-    # Initial state printout
+        async def update_task():
+            print("🤖 Resetting agent to default state.")
+            await session.update_agent(OmniAgent())
+
+        asyncio.create_task(update_task())
+
+    ctx.room.on("participant_connected", on_participant_connected)
+    ctx.room.on("participant_disconnected", on_participant_disconnected)
+
     print("🏠 Room connected! Waiting for participants...")
     print_participant_info(ctx.room.local_participant, is_local=True)
 
-    # Start the session with the initial agent
     await session.start(
         ctx.room,
         agent=agent,
