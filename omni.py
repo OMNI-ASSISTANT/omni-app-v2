@@ -170,6 +170,17 @@ class OmniAgent(Agent):
             llm=google.beta.realtime.RealtimeModel(),
         )
 
+    def update_instructions(self, user_name: str | None):
+        if user_name:
+            self._instructions = (
+                f"CRITICAL: You are Omni, a helpful AI. You are speaking with '{user_name}'.\n"
+                f"You MUST greet them by name in your very first sentence.\n"
+                f"For example: 'Hello {user_name}, how can I help you today?'"
+            )
+        else:
+            self._instructions = "You are Omni, a helpful AI. You are waiting for a user to join the call."
+        print(f"🔄 Agent instructions updated. New prompt: '{self._instructions}'")
+
 async def entrypoint(ctx: JobContext):
     """Main agent entry point."""
     logger.info("Starting Omni Agent...")
@@ -185,15 +196,13 @@ async def entrypoint(ctx: JobContext):
     def on_participant_connected(participant):
         print(f"🎉 Participant '{participant.name or participant.identity}' connected.")
         user_name = participant.name or participant.identity
-        new_agent = OmniAgent(user_name=user_name)
         print(f"🤖 Updating agent with new instructions for user '{user_name}'.")
-        print(f"   New prompt: {new_agent._instructions}")
-        session.update_agent(new_agent)
+        agent.update_instructions(user_name)
 
     def on_participant_disconnected(participant):
         print(f"👋 Participant '{participant.name or participant.identity}' disconnected.")
         print("🤖 Resetting agent to default state.")
-        session.update_agent(OmniAgent())
+        agent.update_instructions(None)
 
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
@@ -204,7 +213,7 @@ async def entrypoint(ctx: JobContext):
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_input_options=RoomInputOptions(close_on_disconnect=False)
+        room_input_options=RoomInputOptions(close_on_disconnect=False, video_enabled=True)
     )
     logger.info("Agent session ended.")
 
