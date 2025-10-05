@@ -41,8 +41,8 @@ async def get_user_info(
 ) -> str:
     """Get information about the current user in the room."""
     try:
-        # Get the room from the context
-        room = context.room
+        # Get the room from the context through the session
+        room = context.session.room
         if not room:
             return "No room information available"
         
