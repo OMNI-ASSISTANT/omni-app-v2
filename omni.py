@@ -36,6 +36,40 @@ logger = logging.getLogger(__name__)
 search = DuckDuckGoSearchRun()
 
 @function_tool
+async def get_user_info(
+    context: "RunContext",
+) -> str:
+    """Get information about the current user in the room."""
+    try:
+        # Get the room from the context
+        room = context.room
+        if not room:
+            return "No room information available"
+        
+        # Get remote participants
+        remote_participants = room.remote_participants
+        if not remote_participants:
+            return "No users currently in the room"
+        
+        # Get the first remote participant (assuming one user)
+        participant = list(remote_participants.values())[0]
+        
+        user_info = {
+            "name": participant.name or participant.identity,
+            "identity": participant.identity,
+            "sid": participant.sid,
+            "state": getattr(participant, 'state', 'Unknown'),
+            "kind": getattr(participant, 'kind', 'Unknown')
+        }
+        
+        logger.info(f"User info retrieved: {user_info}")
+        return f"User information: {user_info}"
+        
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        return f"Error retrieving user information: {str(e)}"
+
+@function_tool
 async def web_search(
     context: "RunContext",
     query: Annotated[str, "The search query to run"],
@@ -153,12 +187,13 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
     def __init__(self):
-        tool_list = [send_call_agent, search_videos, web_search]
+        tool_list = [get_user_info, send_call_agent, search_videos, web_search]
         
         instructions = (
             "You are Omni, a helpful AI assistant. "
-            "When a user joins the room, you will be able to see their name and should address them by name. "
-            "Be helpful, concise, and friendly. Always greet users by their name when you know it."
+            "When a user joins the room, use the get_user_info tool to find out their name and other details. "
+            "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
+            "Start conversations by calling get_user_info to learn about the user."
         )
 
         super().__init__(
