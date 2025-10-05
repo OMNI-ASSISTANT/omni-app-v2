@@ -205,8 +205,19 @@ async def entrypoint(ctx: JobContext):
         print(f"Local Participant:")
         print(f"  - SID: {local_p.sid}")
         print(f"  - Identity: {local_p.identity}")
-        print(f"  - Name: {local_p.name}")
-        print(f"  - Metadata: {local_p.metadata}")
+        print(f"  - Name: {local_p.name or 'No name set'}")
+        print(f"  - State: {getattr(local_p, 'state', 'Unknown')}")
+        print(f"  - Kind: {getattr(local_p, 'kind', 'Unknown')}")
+        print(f"  - Attributes: {getattr(local_p, 'attributes', {}) or 'No attributes'}")
+        print(f"  - Metadata: {local_p.metadata or 'No metadata'}")
+        print(f"  - Permissions: {getattr(local_p, 'permissions', 'Unknown')}")
+        print(f"  - Track Publications: {len(local_p.track_publications)}")
+        
+        # Print local tracks
+        if local_p.track_publications:
+            print(f"  - Local Tracks:")
+            for track_sid, track_pub in local_p.track_publications.items():
+                print(f"    * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
         
     # Print remote participants info
     remote_participants = ctx.room.remote_participants
@@ -216,15 +227,19 @@ async def entrypoint(ctx: JobContext):
         print(f"  Participant {participant_sid}:")
         print(f"    - SID: {participant.sid}")
         print(f"    - Identity: {participant.identity}")
-        print(f"    - Name: {participant.name}")
-        print(f"    - Metadata: {participant.metadata}")
+        print(f"    - Name: {participant.name or 'No name set'}")
+        print(f"    - State: {getattr(participant, 'state', 'Unknown')}")
+        print(f"    - Kind: {getattr(participant, 'kind', 'Unknown')}")
+        print(f"    - Attributes: {getattr(participant, 'attributes', {}) or 'No attributes'}")
+        print(f"    - Metadata: {participant.metadata or 'No metadata'}")
+        print(f"    - Permissions: {getattr(participant, 'permissions', 'Unknown')}")
         print(f"    - Track Publications: {len(participant.track_publications)}")
         
         # Print track information if available
         if participant.track_publications:
             print(f"    - Tracks:")
             for track_sid, track_pub in participant.track_publications.items():
-                print(f"      * {track_pub.kind}: {track_pub.name} (muted: {track_pub.muted})")
+                print(f"      * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
     
     if not remote_participants:
         print("  No remote participants currently connected")
