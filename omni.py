@@ -328,11 +328,16 @@ async def entrypoint(ctx: JobContext):
         
     @ctx.room.on("participant_attributes_changed")
     def on_participant_attributes_changed(changed_attributes, participant):
+        # Ignore attribute changes from the agent itself to avoid overwriting user context
+        if participant.sid == ctx.room.local_participant.sid:
+            print(f"ℹ️ Agent attributes changed: {changed_attributes}")
+            return
+
         print(f"\n📝 PARTICIPANT ATTRIBUTES CHANGED!")
         print(f"  - Participant: {participant.identity}")
         print(f"  - Changed attributes: {changed_attributes}")
         
-        # Update agent context with new attributes
+        # Update agent context with new attributes for the remote participant
         participant_info = {
             'name': participant.name or participant.identity,
             'identity': participant.identity,
@@ -369,7 +374,7 @@ async def entrypoint(ctx: JobContext):
 
     await session.start(
         room=ctx.room,
-        room_input_options=RoomInputOptions(video_enabled=True), 
+        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False),
         agent=agent
     )
     logger.info("Agent session started successfully")
