@@ -154,15 +154,6 @@ class OmniAgent(Agent):
     """Custom Agent class for Omni with video search capabilities."""
     
     def __init__(self, participant_info=None):
-        # Determine if running on Railway
-        RUNNING_ON_RAILWAY = any(
-            env in os.environ for env in (
-                "RAILWAY_ENVIRONMENT",
-                "RAILWAY_PROJECT_ID", 
-                "RAILWAY_SERVICE_NAME",
-            )
-        )
-
         # Create tool list
         tool_list = [
             send_call_agent,
@@ -170,81 +161,26 @@ class OmniAgent(Agent):
             web_search, 
         ]
 
-        # Build dynamic system prompt with participant info
-        base_instructions = """You are **Omni**, a hyper-proactive assistant with external tools.
-                • Think briefly before acting; be concise and helpful.
-                • Reply to the user in ≤ 2 sentences and suggest useful next steps when appropriate.
-                • Ask one clarifying question only if a critical detail is missing.
-                • Use tools proactively to help users accomplish their goals.
-                • For phone calls, ask for the number and confirm before calling.
-                • For web searches, use precise queries and suggest related topics.
-                • For video searches, use descriptive queries about visual content (e.g., "person holding bottle", "car driving", "window").
-                • Video searches extract key frames as images that I can see and analyze - perfect for understanding visual content!
-                • When users mention videos, proactively search to extract and analyze the visual frames.
-                • Always confirm destructive actions before proceeding."""
-        
-        # Add participant context if available
-        if participant_info:
-            participant_context = f"""
-                
-                **CURRENT USER CONTEXT:**
-                • User Name: {participant_info.get('name', 'Not provided')}
-                • User Identity: {participant_info.get('identity', 'Unknown')}
-                • Connection State: {participant_info.get('state', 'Unknown')}
-                • User Type: {participant_info.get('kind_name', 'Standard User')}
-                • Has Audio: {participant_info.get('has_audio', False)}
-                • Has Video: {participant_info.get('has_video', False)}
-                
-                Use this context to personalize your responses and be more helpful!"""
-            base_instructions += participant_context
+        # Build dynamic system prompt
+        if participant_info and participant_info.get('name'):
+            user_name = participant_info['name']
+            instructions = (f"Your name is Omni, a helpful assistant. You are speaking with {user_name}. "
+                            f"Be polite and helpful, and use their name when appropriate. Keep your responses to 2 sentences or less.")
+        else:
+            instructions = ("Your name is Omni, a helpful assistant. "
+                            "You are waiting for a user to join. Be polite and helpful. "
+                            "Keep your responses to 2 sentences or less.")
 
         super().__init__(
-            instructions=base_instructions,
+            instructions=instructions,
             tools=tool_list,
             llm=google.beta.realtime.RealtimeModel(),
         )
 
-
 def get_participant_kind_name(kind):
     """Convert participant kind number to readable name."""
-    kind_map = {
-        0: "Standard User",
-        1: "Ingress",
-        2: "Egress", 
-        3: "SIP",
-        4: "Agent"
-    }
+    kind_map = { 0: "Standard User", 1: "Ingress", 2: "Egress", 3: "SIP", 4: "Agent" }
     return kind_map.get(kind, f"Unknown ({kind})")
-
-def update_agent_context(agent, participant_info):
-    """Update the agent's system prompt with current participant context."""
-    base_instructions = """You are **Omni**, a hyper-proactive assistant.
-*   Be concise and helpful.
-*   Reply in 2 sentences or less.
-*   Use your tools to help the user."""
-    
-    # Add participant context if available
-    if participant_info and participant_info.get('name'):
-        user_name = participant_info['name']
-        participant_context = f"""
-
-You are currently speaking with '{user_name}'. Address them by their name when it makes sense.
-Here is some info about them:
-- Identity: {participant_info.get('identity', 'Unknown')}
-- Has Audio: {participant_info.get('has_audio', False)}
-- Has Video: {participant_info.get('has_video', False)}"""
-        base_instructions = f"Hello! Your name is Omni and you are a helpful assistant. The user you are talking to is named {user_name}. Please be polite and helpful, and use their name when you can."
-        print(f"✅ Agent context updated for user: {user_name}")
-    else:
-        print("✅ Agent context reset to default. No user name available.")
-    
-    # Update the agent's instructions directly
-    try:
-        agent._instructions = base_instructions
-        print(f"🔄 System prompt updated successfully. New prompt: '{base_instructions[:100]}...'")
-    except Exception as e:
-        print(f"⚠️ Failed to update agent context: {e}")
-
 
 def print_participant_info(participant, is_local=False):
     """Print detailed participant information."""
@@ -253,124 +189,49 @@ def print_participant_info(participant, is_local=False):
     print(f"  - SID: {participant.sid}")
     print(f"  - Identity: {participant.identity}")
     print(f"  - Name: {participant.name or 'No name set'}")
-    print(f"  - State: {getattr(participant, 'state', 'Unknown')}")
     print(f"  - Kind: {get_participant_kind_name(getattr(participant, 'kind', 0))}")
-    print(f"  - Attributes: {getattr(participant, 'attributes', {}) or 'No attributes'}")
-    print(f"  - Metadata: {participant.metadata or 'No metadata'}")
-    print(f"  - Permissions: {getattr(participant, 'permissions', 'Unknown')}")
-    print(f"  - Track Publications: {len(participant.track_publications)}")
-    
-    # Print track information if available
-    if participant.track_publications:
-        print(f"  - Active Tracks:")
-        for track_sid, track_pub in participant.track_publications.items():
-            print(f"    * {track_pub.kind}: {track_pub.name or 'Unnamed'} (muted: {track_pub.muted})")
+    print(f"  - Tracks: {len(participant.track_publications)}")
     print("=" * 50)
 
 async def entrypoint(ctx: JobContext):
     """Main agent entry point called by LiveKit Agents framework."""
     logger.info("Starting Omni Agent with Gemini Live API")
-
-    # Connect to the room first
     await ctx.connect()
-    
-    # Check if Google API key is available
-    google_api_key = os.getenv("GOOGLE_API_KEY")
-    if not google_api_key:
-        logger.error("Google API key not found. Please add GOOGLE_API_KEY to your .env file")
-        logger.error("Get your Google API key from: https://makersuite.google.com/app/apikey")
-        logger.error("Then add this line to your .env file: GOOGLE_API_KEY=your-api-key-here")
-        raise ValueError("GOOGLE_API_KEY environment variable is required for Gemini Live API")
-        
-    # Create the initial agent
+
+    # Create the initial agent and session
     agent = OmniAgent()
-    
-    # Store agent reference in job context for tool access
-    ctx._agent = agent
-
-    # Set up event listeners for participant events
-    @ctx.room.on("participant_connected")
-    def on_participant_connected(participant):
-        print(f"\n🎉 NEW PARTICIPANT JOINED THE ROOM!")
-        print_participant_info(participant, is_local=False)
-        
-        # Extract participant info for context
-        participant_info = {
-            'name': participant.name or participant.identity,
-            'identity': participant.identity,
-            'state': getattr(participant, 'state', 'JOINED'),
-            'kind_name': get_participant_kind_name(getattr(participant, 'kind', 0)),
-            'has_audio': any(pub.kind == 'audio' for pub in participant.track_publications.values()),
-            'has_video': any(pub.kind == 'video' for pub in participant.track_publications.values())
-        }
-        
-        # Update agent's system prompt with participant context
-        print(f"🤖 Updating Omni with user context: {participant_info['name']}")
-        update_agent_context(agent, participant_info)
-        
-    @ctx.room.on("participant_disconnected") 
-    def on_participant_disconnected(participant):
-        print(f"\n👋 PARTICIPANT LEFT THE ROOM!")
-        print_participant_info(participant, is_local=False)
-        
-        # Reset agent context when user leaves
-        print(f"🤖 Resetting Omni to default state")
-        update_agent_context(agent, None)
-        
-    @ctx.room.on("participant_attributes_changed")
-    def on_participant_attributes_changed(changed_attributes, participant):
-        # The local participant is the agent itself. We must ignore its own attribute changes
-        # to avoid wiping the user's context from the system prompt.
-        if participant.identity == ctx.room.local_participant.identity:
-            print(f"ℹ️ Agent's own attributes changed: {changed_attributes}. Ignoring for context update.")
-            return
-
-        print(f"\n📝 Remote participant attributes changed!")
-        print(f"  - Participant: {participant.identity}")
-        print(f"  - Changed attributes: {changed_attributes}")
-        
-        # Update agent context with new attributes for the remote participant
-        participant_info = {
-            'name': participant.name or participant.identity,
-            'identity': participant.identity,
-            'state': getattr(participant, 'state', 'JOINED'),
-            'kind_name': get_participant_kind_name(getattr(participant, 'kind', 0)),
-            'has_audio': any(pub.kind == 'audio' for pub in participant.track_publications.values()),
-            'has_video': any(pub.kind == 'video' for pub in participant.track_publications.values()),
-            'attributes': getattr(participant, 'attributes', {})
-        }
-        print(f"🤖 Re-updating Omni with new context for user: {participant_info['name']}")
-        update_agent_context(agent, participant_info)
-        
-    @ctx.room.on("track_published")
-    def on_track_published(publication, participant):
-        print(f"\n📡 NEW TRACK PUBLISHED!")
-        print(f"  - Participant: {participant.identity}")
-        print(f"  - Track: {publication.kind} - {publication.name or 'Unnamed'}")
-        print(f"  - Muted: {publication.muted}")
-        
-    @ctx.room.on("track_subscribed")
-    def on_track_subscribed(track, publication, participant):
-        print(f"\n🔊 SUBSCRIBED TO TRACK!")
-        print(f"  - Participant: {participant.identity}")
-        print(f"  - Track: {publication.kind} - {publication.name or 'Unnamed'}")
-        print(f"  - Track SID: {track.sid}")
-    
-    # Print initial room state
-    logger.info("=== INITIAL ROOM STATE ===")
-    print(f"\n🏠 Room connected! Waiting for participants...")
-    if ctx.room.local_participant:
-        print_participant_info(ctx.room.local_participant, is_local=True)
-    
-    # Create session with Gemini Live API
     session = AgentSession()
 
+    # Define event handlers to update the agent
+    @ctx.room.on("participant_connected")
+    async def on_participant_connected(participant):
+        print("\n🎉 NEW PARTICIPANT JOINED!")
+        print_participant_info(participant)
+        
+        participant_info = {'name': participant.name or participant.identity}
+        new_agent = OmniAgent(participant_info=participant_info)
+        print(f"🤖 Updating agent context for {participant_info['name']}")
+        await session.update_agent(new_agent)
+
+    @ctx.room.on("participant_disconnected")
+    async def on_participant_disconnected(participant):
+        print("\n👋 PARTICIPANT LEFT!")
+        print_participant_info(participant)
+        
+        print("🤖 Resetting agent to default state.")
+        await session.update_agent(OmniAgent())
+
+    # Initial state printout
+    print("🏠 Room connected! Waiting for participants...")
+    print_participant_info(ctx.room.local_participant, is_local=True)
+
+    # Start the session with the initial agent
     await session.start(
-        room=ctx.room,
-        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False), 
-        agent=agent
+        ctx.room,
+        agent=agent,
+        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False)
     )
-    logger.info("Agent session started successfully")
+    logger.info("Agent session ended.")
 
 # ───────── Entry Point ─────────
 
