@@ -35,39 +35,21 @@ logger = logging.getLogger(__name__)
 # ───────── Tool Function Definitions ─────────
 search = DuckDuckGoSearchRun()
 
+# Global variable to store current user info
+current_user_info = None
+
 @function_tool
 async def get_user_info(
     context: "RunContext",
 ) -> str:
     """Get information about the current user in the room."""
-    try:
-        # Get the room from the context through the session
-        room = context.session.room
-        if not room:
-            return "No room information available"
-        
-        # Get remote participants
-        remote_participants = room.remote_participants
-        if not remote_participants:
-            return "No users currently in the room"
-        
-        # Get the first remote participant (assuming one user)
-        participant = list(remote_participants.values())[0]
-        
-        user_info = {
-            "name": participant.name or participant.identity,
-            "identity": participant.identity,
-            "sid": participant.sid,
-            "state": getattr(participant, 'state', 'Unknown'),
-            "kind": getattr(participant, 'kind', 'Unknown')
-        }
-        
-        logger.info(f"User info retrieved: {user_info}")
-        return f"User information: {user_info}"
-        
-    except Exception as e:
-        logger.error(f"Error getting user info: {e}")
-        return f"Error retrieving user information: {str(e)}"
+    global current_user_info
+    
+    if current_user_info:
+        logger.info(f"User info retrieved: {current_user_info}")
+        return f"User information: {current_user_info}"
+    else:
+        return "No user information available. Please wait for a user to join."
 
 @function_tool
 async def web_search(
@@ -215,15 +197,29 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession()
 
     def on_participant_connected(participant):
+        global current_user_info
         print(f"🎉 Participant connected!")
         print(f"   Identity: {participant.identity}")
         print(f"   Name: {participant.name}")
         print(f"   SID: {participant.sid}")
         print(f"   Attributes: {getattr(participant, 'attributes', 'No attributes')}")
         print(f"   Metadata: {participant.metadata}")
+        
+        # Store user info globally for the agent to access
+        current_user_info = {
+            "name": participant.name or participant.identity,
+            "identity": participant.identity,
+            "sid": participant.sid,
+            "state": getattr(participant, 'state', 'Unknown'),
+            "kind": getattr(participant, 'kind', 'Unknown')
+        }
+        print(f"✅ Stored user info: {current_user_info}")
 
     def on_participant_disconnected(participant):
+        global current_user_info
         print(f"👋 Participant disconnected: {participant.identity}")
+        current_user_info = None
+        print("🔄 Cleared user info")
 
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
