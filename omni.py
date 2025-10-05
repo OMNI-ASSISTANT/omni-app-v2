@@ -151,25 +151,18 @@ async def search_videos(
 # ───────── Main Agent Entry Point ─────────
 
 class OmniAgent(Agent):
-    """Custom Agent class for Omni with video search capabilities."""
-    
-    def __init__(self, participant_info=None):
-        # Create tool list
-        tool_list = [
-            send_call_agent,
-            search_videos,
-            web_search, 
-        ]
+    """Custom Agent class for Omni."""
+    def __init__(self, user_name: str | None = None):
+        tool_list = [send_call_agent, search_videos, web_search]
 
-        # Build dynamic system prompt
-        if participant_info and participant_info.get('name'):
-            user_name = participant_info['name']
-            instructions = (f"Your name is Omni, a helpful assistant. You are speaking with {user_name}. "
-                            f"Be polite and helpful, and use their name when appropriate. Keep your responses to 2 sentences or less.")
+        if user_name:
+            instructions = (
+                f"CRITICAL: You are Omni, a helpful AI. You are speaking with '{user_name}'.\n"
+                f"You MUST greet them by name in your very first sentence.\n"
+                f"For example: 'Hello {user_name}, how can I help you today?'"
+            )
         else:
-            instructions = ("Your name is Omni, a helpful assistant. "
-                            "You are waiting for a user to join. Be polite and helpful. "
-                            "Keep your responses to 2 sentences or less.")
+            instructions = "You are Omni, a helpful AI. You are waiting for a user to join the call."
 
         super().__init__(
             instructions=instructions,
@@ -177,61 +170,41 @@ class OmniAgent(Agent):
             llm=google.beta.realtime.RealtimeModel(),
         )
 
-def get_participant_kind_name(kind):
-    """Convert participant kind number to readable name."""
-    kind_map = { 0: "Standard User", 1: "Ingress", 2: "Egress", 3: "SIP", 4: "Agent" }
-    return kind_map.get(kind, f"Unknown ({kind})")
-
-def print_participant_info(participant, is_local=False):
-    """Print detailed participant information."""
-    prefix = "Local" if is_local else "Remote"
-    print(f"\n🔍 {prefix} Participant Details:")
-    print(f"  - SID: {participant.sid}")
-    print(f"  - Identity: {participant.identity}")
-    print(f"  - Name: {participant.name or 'No name set'}")
-    print(f"  - Kind: {get_participant_kind_name(getattr(participant, 'kind', 0))}")
-    print(f"  - Tracks: {len(participant.track_publications)}")
-    print("=" * 50)
-
 async def entrypoint(ctx: JobContext):
-    """Main agent entry point called by LiveKit Agents framework."""
-    logger.info("Starting Omni Agent with Gemini Live API")
-    
+    """Main agent entry point."""
+    logger.info("Starting Omni Agent...")
     if not os.getenv("GOOGLE_API_KEY"):
-        logger.error("GOOGLE_API_KEY not found in environment variables.")
+        logger.error("GOOGLE_API_KEY not found.")
         raise ValueError("GOOGLE_API_KEY is required.")
 
     await ctx.connect()
-
+    
     agent = OmniAgent()
     session = AgentSession()
 
     def on_participant_connected(participant):
-        print("\n🎉 NEW PARTICIPANT JOINED!")
-        print_participant_info(participant)
-        
-        participant_info = {'name': participant.name or participant.identity}
-        new_agent = OmniAgent(participant_info=participant_info)
-        print(f"🤖 Updating agent context for {participant_info['name']}")
+        print(f"🎉 Participant '{participant.name or participant.identity}' connected.")
+        user_name = participant.name or participant.identity
+        new_agent = OmniAgent(user_name=user_name)
+        print(f"🤖 Updating agent with new instructions for user '{user_name}'.")
+        print(f"   New prompt: {new_agent._instructions}")
         session.update_agent(new_agent)
 
     def on_participant_disconnected(participant):
-        print("\n👋 PARTICIPANT LEFT!")
-        print_participant_info(participant)
-        
+        print(f"👋 Participant '{participant.name or participant.identity}' disconnected.")
         print("🤖 Resetting agent to default state.")
         session.update_agent(OmniAgent())
 
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
-    print("🏠 Room connected! Waiting for participants...")
-    print_participant_info(ctx.room.local_participant, is_local=True)
+    print(f"🏠 Agent is in the room, waiting for users...")
+    print(f"   Initial prompt: {agent._instructions}")
 
     await session.start(
         room=ctx.room,
         agent=agent,
-        room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False)
+        room_input_options=RoomInputOptions(close_on_disconnect=False)
     )
     logger.info("Agent session ended.")
 
