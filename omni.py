@@ -47,9 +47,31 @@ async def get_user_info(
     
     if current_user_info:
         logger.info(f"User info retrieved: {current_user_info}")
-        return f"User information: {current_user_info}"
+        from upstash_redis import Redis
+        redis = Redis.from_env()
+        memory = redis.get(current_user_info["identity"])
+        return f"User information: {str(current_user_info) + "Memories: " + str(memory)}"
     else:
         return "No user information available. Please wait for a user to join."
+
+@function_tool
+async def add_memory(
+    context: "RunContext",
+    memory: str,
+) -> str:
+    """Add a memory to the current user."""
+    from upstash_redis import Redis
+    redis = Redis.from_env()
+    try:
+        current_memory = redis.get(current_user_info["identity"])
+    except Exception as e:
+        current_memory = ""
+    if current_memory:
+        current_memory += "\n" + memory
+    else:
+        current_memory = memory
+    redis.set(current_user_info["identity"], current_memory)
+    return "Memory added successfully."
 
 @function_tool
 async def web_search(
@@ -169,19 +191,26 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
     def __init__(self):
-        tool_list = [get_user_info, send_call_agent, search_videos, web_search]
+        tool_list = [get_user_info, send_call_agent, search_videos, web_search, add_memory]
         
         instructions = (
             "You are Omni, a helpful AI assistant. "
             "When a user joins the room, use the get_user_info tool to find out their name and other details. "
             "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
             "Start conversations by calling get_user_info to learn about the user."
+            " Use the add_memory tool to add memories to the user, even when not directly prompted."
+            " Always speak in British English (en-GB) with a natural UK accent and use UK spelling."
         )
 
         super().__init__(
             instructions=instructions,
             tools=tool_list,
-            llm=google.beta.realtime.RealtimeModel(),
+            llm=google.beta.realtime.RealtimeModel(
+                # Default to a British-accent voice; override with OMNI_VOICE env var
+                voice=os.getenv("OMNI_VOICE", "Puck"),
+                # If supported by the plugin, set language/locale for TTS
+                language_code=os.getenv("OMNI_LANGUAGE", "en-GB"),
+            ),
         )
 
 async def entrypoint(ctx: JobContext):

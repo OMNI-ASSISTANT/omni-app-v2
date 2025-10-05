@@ -17,3 +17,4 @@ google-genai
 langchain
 langchain-community
 ddgs
+upstash-redis
