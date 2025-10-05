@@ -297,17 +297,7 @@ async def entrypoint(ctx: JobContext):
     # Store agent reference in job context for tool access
     ctx._agent = agent
 
-    # Create session with Gemini Live API
-    session = AgentSession()
-
-    # Start the session with video enabled
-    await session.start(
-        room=ctx.room,
-        room_input_options=RoomInputOptions(video_enabled=True), 
-        agent=agent
-    )
-    
-    # Set up event listeners for participant events AFTER session starts
+    # Set up event listeners for participant events
     @ctx.room.on("participant_connected")
     def on_participant_connected(participant):
         print(f"\n🎉 NEW PARTICIPANT JOINED THE ROOM!")
@@ -374,6 +364,14 @@ async def entrypoint(ctx: JobContext):
     if ctx.room.local_participant:
         print_participant_info(ctx.room.local_participant, is_local=True)
     
+    # Create session with Gemini Live API
+    session = AgentSession()
+
+    await session.start(
+        room=ctx.room,
+        room_input_options=RoomInputOptions(video_enabled=True), 
+        agent=agent
+    )
     logger.info("Agent session started successfully")
 
 # ───────── Entry Point ─────────
