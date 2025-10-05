@@ -12,3 +12,8 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib 
 requests 
+elevenlabs
+google-genai
+langchain
+langchain-community
+ddgs

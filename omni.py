@@ -10,7 +10,7 @@ Features:
 * All original tool functions preserved
 * Production-ready for Railway deployment
 """
-
+from langchain_community.tools import DuckDuckGoSearchRun
 import asyncio
 import logging
 import os
@@ -24,159 +24,176 @@ from typing import Annotated
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, Agent, AgentSession, RoomInputOptions
 from livekit.plugins import google
+from eleven import call_user
+from google.genai import types
+
 # ───────── ENV & LOG ─────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ───────── Tool Function Definitions ─────────
+search = DuckDuckGoSearchRun()
 
-@function_tool()
-async def change_mode(
-    context: RunContext,
-    mode: Annotated[str, "The mode to switch to: 'audio' for audio-only mode or 'video' for video mode"]
+@function_tool
+async def web_search(
+    context: "RunContext",
+    query: Annotated[str, "The search query to run"],
 ) -> str:
-    """Change between audio-only and video mode for LiveKit session."""
-    logger.info(f"Switching to {mode} mode")
-    if mode.lower() == "audio":
-        return "Switched to audio-only mode. Video is now disabled."
-    elif mode.lower() == "video":
-        return "Switched to video mode. Video and audio are now enabled."
-    else:
-        return "Invalid mode. Please specify 'audio' or 'video'."
-
-@function_tool()
-async def open_tab(
-    context: RunContext,
-    url: Annotated[str, "The URL to open in the browser"]
-) -> str:
-    """Open a URL in Arc browser (or default browser if Arc not available)."""
-    logger.info(f"Opening URL: {url}")
-    try:
-        # Try Arc browser first (macOS)
-        subprocess.run(["open", "-b", "company.thebrowser.Browser", url], check=True)
-        return f"Opened {url} in Arc browser"
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        try:
-            # Fallback to default browser
-            subprocess.run(["open", url], check=True)
-            return f"Opened {url} in default browser"
-        except subprocess.CalledProcessError as e:
-            return f"Failed to open {url}: {str(e)}"
+    """Perform a web search using DuckDuckGo and return results as text."""
+    logger.info(f"Running web search for: {query}")
+    result = search.run(query)
+    return result
 
 @function_tool()
 async def send_call_agent(
     context: RunContext,
+    goal: Annotated[str, "Goal of the call"],
+    user: Annotated[str, "User to call"],
     to_number: Annotated[str, "Phone number to call"],
-    agent_id: Annotated[str, "ElevenLabs agent ID to use for the call"] = "your-agent-id"
 ) -> str:
     """Initiate a phone call using ElevenLabs conversational AI agent."""
-    logger.info(f"Initiating call to {to_number} with agent {agent_id}")
+    logger.info(f"Initiating call to {to_number} with agent {goal} {user}")
+    return call_user(goal=goal, user=user, phone_number=to_number)
+
+
+@function_tool()
+async def search_videos(
+    context: RunContext,
+    query: Annotated[str, "Search query for finding videos (e.g., 'person holding water bottle', 'window', 'car driving')"],
+    question: Annotated[str, "What needs to be found out about the video?"],
+    top_k: Annotated[int, "Number of top results to return (default: 3)"] = 3
+) -> str:
+    """Search for videos using AI-powered vector database and extract key frames as images for Gemini Live."""
+    logger.info(f"Searching videos for: {query}")
     
-    # Import here to avoid issues if elevenlabs isn't installed
     try:
         import requests
-    except ImportError:
-        return "Error: requests library not available"
+        import cv2
+        import tempfile
+        import base64
+        import numpy as np
+        from livekit.agents.llm import ImageContent
+        from livekit.agents import get_job_context
+    except ImportError as e:
+        return f"Error: Required library not available: {str(e)}"
     
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    if not api_key:
-        return "Error: ELEVENLABS_API_KEY not found in environment variables"
+    api_base_url = "https://macbook-pro.tail1dc532.ts.net"
     
-    url = "https://api.elevenlabs.io/v1/convai/conversations"
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json"
-    }
-    data = {
-        "agent_id": agent_id,
-        "mode": "phone_call",
-        "phone_number": to_number
-    }
+    # Check API health and perform search
+    health_response = requests.get(f"{api_base_url}/", timeout=10)
+    if health_response.status_code == 200:
+        health_data = health_response.json()
+        if not health_data.get("model_loaded", False):
+            return "Video search unavailable - AI model not loaded."
     
-    try:
-        response = requests.post(url, headers=headers, json=data)
-        if response.status_code == 200:
-            result = response.json()
-            return f"Call initiated successfully to {to_number}. Call ID: {result.get('conversation_id', 'Unknown')}"
-        else:
-            return f"Failed to initiate call: {response.status_code} - {response.text}"
-    except Exception as e:
-        return f"Error initiating call: {str(e)}"
+    # Search for videos
+    search_data = {"query": query, "top_k": min(top_k, 10)}
+    response = requests.post(
+        f"{api_base_url}/search",
+        headers={"Content-Type": "application/json"},
+        json=search_data,
+        timeout=30
+    )
+    import time
+    if response.status_code != 200:
+        return f"Video search failed: {response.status_code}"
+        
+    results = response.json().get("results", [])
+    if not results:
+        return f"No videos found matching '{query}'. Try different terms like 'person', 'car', 'window'."
+    
+    # Get best match and extract frames
+    best_match = results[0]
+    filename = best_match.get("filename", "Unknown")
+    similarity_percent = round(best_match.get("similarity", 0) * 100, 1)
+    video_url = f"{api_base_url}/vids/{filename}"
 
-@function_tool()
-async def search_drive(
-    context: RunContext,
-    query: Annotated[str, "Search query for Google Drive files"]
-) -> str:
-    """Search for files in Google Drive."""
-    logger.info(f"Searching Google Drive for: {query}")
-    
-    try:
-        from googleapiclient.discovery import build
-        from google.oauth2.credentials import Credentials
-        from google.auth.transport.requests import Request
-        from google_auth_oauthlib.flow import InstalledAppFlow
-    except ImportError:
-        return "Error: Google API libraries not available"
-    
-    # Google Drive API setup would go here
-    # For now, return a placeholder
-    return f"Searched Google Drive for '{query}'. This feature requires Google API setup."
+    # Download the video file and save it to disk
+    video_response = requests.get(video_url, timeout=60)
+    video_path = filename
+    with open(video_path, "wb") as f:
+        f.write(video_response.content)
 
-@function_tool()
-async def download_drive_file(
-    context: RunContext,
-    file_id: Annotated[str, "Google Drive file ID"],
-    destination: Annotated[str, "Local destination path"] = "./downloads/"
-) -> str:
-    """Download a file from Google Drive."""
-    logger.info(f"Downloading file {file_id} to {destination}")
-    
-    # Google Drive download implementation would go here
-    return f"File download initiated from Google Drive ID: {file_id}"
+    if video_response.status_code != 200:
+        print(f"Found video '{filename}' but couldn't download it.")
+
+    #ask gemini what the video is about/what it shows thru question
+    from google import genai
+    from google.genai import types
+    import dotenv
+    dotenv.load_dotenv()
+    #get from .env
+    client = genai.Client(api_key=dotenv.get_key(".env", "GOOGLE_API_KEY"))
+    video_temp = client.files.upload(file=video_path)
+    # wait for file to be ACTIVE
+    while True:
+        try:
+            response = client.models.generate_content(
+            model='models/gemini-2.5-flash',
+            contents=['Answer the following question based on the video: '+question, video_temp]
+        )
+            break
+        except Exception as e:
+            #file has not been loaded yet
+            time.sleep(1)
+    video_summary = response.text
+    print(video_summary)
+    #delete video file
+    os.remove(video_path)
+    #delete video temp file
+    client.files.delete(video_temp.id)
+    return video_summary
+    #| GET | `/vids/{filename}` | Stream individual video for playback | None |
+
+
 
 # ───────── Main Agent Entry Point ─────────
+
+class OmniAgent(Agent):
+    """Custom Agent class for Omni with video search capabilities."""
+    
+    def __init__(self):
+        # Determine if running on Railway
+        RUNNING_ON_RAILWAY = any(
+            env in os.environ for env in (
+                "RAILWAY_ENVIRONMENT",
+                "RAILWAY_PROJECT_ID", 
+                "RAILWAY_SERVICE_NAME",
+            )
+        )
+
+        # Create tool list
+        tool_list = [
+            send_call_agent,
+            search_videos,
+            web_search, 
+        ]
+
+        super().__init__(
+            instructions="""You are **Omni**, a hyper-proactive assistant with external tools.
+                • Think briefly before acting; be concise and helpful.
+                • Reply to the user in ≤ 2 sentences and suggest useful next steps when appropriate.
+                • Ask one clarifying question only if a critical detail is missing.
+                • Use tools proactively to help users accomplish their goals.
+                • For phone calls, ask for the number and confirm before calling.
+                • For web searches, use precise queries and suggest related topics.
+                • For video searches, use descriptive queries about visual content (e.g., "person holding bottle", "car driving", "window").
+                • Video searches extract key frames as images that I can see and analyze - perfect for understanding visual content!
+                • When users mention videos, proactively search to extract and analyze the visual frames.
+                • Always confirm destructive actions before proceeding.
+            """,
+            tools=tool_list,
+            llm=google.beta.realtime.RealtimeModel(),
+        )
+
 
 async def entrypoint(ctx: JobContext):
     """Main agent entry point called by LiveKit Agents framework."""
     logger.info("Starting Omni Agent with Gemini Live API")
-    
+    print(ctx)
     # Connect to the room first
     await ctx.connect()
-
-    # Determine if running on Railway (Railway automatically sets at least one of these env vars)
-    RUNNING_ON_RAILWAY = any(
-        env in os.environ for env in (
-            "RAILWAY_ENVIRONMENT",  # set to "production" on deployed services
-            "RAILWAY_PROJECT_ID",   # project UUID
-            "RAILWAY_SERVICE_NAME", # service name
-        )
-    )
-
-    # Create the agent with tools passed directly to constructor
-    tool_list = [
-        change_mode,
-        send_call_agent,
-        search_drive,
-        download_drive_file,
-    ]
-    if not RUNNING_ON_RAILWAY:
-        # open_tab uses subprocess & GUI – skip inside headless Railway container
-        tool_list.append(open_tab)
-
-    agent = Agent(
-        instructions="""You are **Omni**, a hyper-proactive assistant with external tools.
-            • Think briefly before acting; be concise and helpful.
-            • Reply to the user in ≤ 2 sentences and suggest useful next steps when appropriate.
-            • Ask one clarifying question only if a critical detail is missing.
-            • Use tools proactively to help users accomplish their goals.
-            • For phone calls, ask for the number and confirm before calling.
-            • For web searches, use precise queries and suggest related topics.
-            • Always confirm destructive actions before proceeding.
-        """,
-        tools=tool_list
-    )
 
     # Check if Google API key is available
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -185,16 +202,22 @@ async def entrypoint(ctx: JobContext):
         logger.error("Get your Google API key from: https://makersuite.google.com/app/apikey")
         logger.error("Then add this line to your .env file: GOOGLE_API_KEY=your-api-key-here")
         raise ValueError("GOOGLE_API_KEY environment variable is required for Gemini Live API")
+        
+    # Create the agent
+    agent = OmniAgent()
+    
+    # Store agent reference in job context for tool access
+    ctx._agent = agent
 
-    # Create session with Gemini Live API (using the correct beta module)
-    session = AgentSession(
-        # Note: Gemini Live is a realtime model, so we don't need separate STT/TTS
-        # The model handles voice input/output directly
-        llm=google.beta.realtime.RealtimeModel(),
+    # Create session with Gemini Live API
+    session = AgentSession()
+
+    # Start the session with video enabled
+    await session.start(
+        room=ctx.room,
+        room_input_options=RoomInputOptions(video_enabled=True), 
+        agent=agent
     )
-
-    # Start the session
-    await session.start(room=ctx.room,room_input_options=RoomInputOptions(video_enabled=True), agent=agent)
     
     logger.info("Agent session started successfully")
 
