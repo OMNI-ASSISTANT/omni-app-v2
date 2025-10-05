@@ -161,26 +161,57 @@ async def search_videos(
     from google.genai import types
     import dotenv
     dotenv.load_dotenv()
-    #get from .env
-    client = genai.Client(api_key=dotenv.get_key(".env", "GOOGLE_API_KEY"))
-    video_temp = client.files.upload(file=video_path)
-    # wait for file to be ACTIVE
-    while True:
+    # Prefer env var, fallback to .env key if present
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
         try:
-            response = client.models.generate_content(
+            api_key = dotenv.get_key(".env", "GOOGLE_API_KEY")
+        except Exception:
+            api_key = None
+    if not api_key:
+        return "Error: GOOGLE_API_KEY not configured. Set env var or .env."
+
+    client = genai.Client(api_key=api_key)
+    uploaded_file = client.files.upload(file=video_path)
+
+    # Wait for the uploaded file to become ACTIVE
+    max_wait_seconds = 60
+    start_time = time.time()
+    active_file = None
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            f = client.files.get(name=getattr(uploaded_file, "name", None) or getattr(uploaded_file, "id", None))
+            state = getattr(f, "state", None)
+            # state may be literal "ACTIVE" or object with name
+            state_name = getattr(state, "name", state)
+            if state_name == "ACTIVE":
+                active_file = f
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+
+    if not active_file:
+        return "Error: Uploaded file did not become ACTIVE in time. Try again."
+
+    try:
+        response = client.models.generate_content(
             model='models/gemini-2.5-flash',
-            contents=['Answer the following question based on the video: '+question, video_temp]
+            contents=['Answer the following question based on the video: ' + question, active_file]
         )
-            break
-        except Exception as e:
-            #file has not been loaded yet
-            time.sleep(1)
-    video_summary = response.text
+    except Exception as e:
+        # Common transient errors include quota or file state races
+        return f"Error generating analysis: {e}"
+
+    video_summary = getattr(response, "text", None) or ""
     print(video_summary)
     #delete video file
     os.remove(video_path)
     #delete video temp file
-    client.files.delete(video_temp.id)
+    try:
+        client.files.delete(name=getattr(active_file, "name", None) or getattr(active_file, "id", None))
+    except Exception:
+        pass
     return video_summary
     #| GET | `/vids/{filename}` | Stream individual video for playback | None |
 
