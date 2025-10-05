@@ -152,34 +152,20 @@ async def search_videos(
 
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
-    def __init__(self, user_name: str | None = None):
+    def __init__(self):
         tool_list = [send_call_agent, search_videos, web_search]
-
-        if user_name:
-            instructions = (
-                f"CRITICAL: You are Omni, a helpful AI. You are speaking with '{user_name}'.\n"
-                f"You MUST greet them by name in your very first sentence.\n"
-                f"For example: 'Hello {user_name}, how can I help you today?'"
-            )
-        else:
-            instructions = "You are Omni, a helpful AI. You are waiting for a user to join the call."
+        
+        instructions = (
+            "You are Omni, a helpful AI assistant. "
+            "When a user joins the room, you will be able to see their name and should address them by name. "
+            "Be helpful, concise, and friendly. Always greet users by their name when you know it."
+        )
 
         super().__init__(
             instructions=instructions,
             tools=tool_list,
             llm=google.beta.realtime.RealtimeModel(),
         )
-
-    def update_instructions(self, user_name: str | None):
-        if user_name:
-            self._instructions = (
-                f"CRITICAL: You are Omni, a helpful AI. You are speaking with '{user_name}'.\n"
-                f"You MUST greet them by name in your very first sentence.\n"
-                f"For example: 'Hello {user_name}, how can I help you today?'"
-            )
-        else:
-            self._instructions = "You are Omni, a helpful AI. You are waiting for a user to join the call."
-        print(f"🔄 Agent instructions updated. New prompt: '{self._instructions}'")
 
 async def entrypoint(ctx: JobContext):
     """Main agent entry point."""
@@ -194,21 +180,20 @@ async def entrypoint(ctx: JobContext):
     session = AgentSession()
 
     def on_participant_connected(participant):
-        print(f"🎉 Participant '{participant.name or participant.identity}' connected.")
-        user_name = participant.name or participant.identity
-        print(f"🤖 Updating agent with new instructions for user '{user_name}'.")
-        agent.update_instructions(user_name)
+        print(f"🎉 Participant connected!")
+        print(f"   Identity: {participant.identity}")
+        print(f"   Name: {participant.name}")
+        print(f"   SID: {participant.sid}")
+        print(f"   Attributes: {getattr(participant, 'attributes', 'No attributes')}")
+        print(f"   Metadata: {participant.metadata}")
 
     def on_participant_disconnected(participant):
-        print(f"👋 Participant '{participant.name or participant.identity}' disconnected.")
-        print("🤖 Resetting agent to default state.")
-        agent.update_instructions(None)
+        print(f"👋 Participant disconnected: {participant.identity}")
 
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
     print(f"🏠 Agent is in the room, waiting for users...")
-    print(f"   Initial prompt: {agent._instructions}")
 
     await session.start(
         room=ctx.room,
