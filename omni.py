@@ -196,6 +196,11 @@ def print_participant_info(participant, is_local=False):
 async def entrypoint(ctx: JobContext):
     """Main agent entry point called by LiveKit Agents framework."""
     logger.info("Starting Omni Agent with Gemini Live API")
+    
+    if not os.getenv("GOOGLE_API_KEY"):
+        logger.error("GOOGLE_API_KEY not found in environment variables.")
+        raise ValueError("GOOGLE_API_KEY is required.")
+
     await ctx.connect()
 
     agent = OmniAgent()
@@ -204,24 +209,18 @@ async def entrypoint(ctx: JobContext):
     def on_participant_connected(participant):
         print("\n🎉 NEW PARTICIPANT JOINED!")
         print_participant_info(participant)
-
-        async def update_task():
-            participant_info = {'name': participant.name or participant.identity}
-            new_agent = OmniAgent(participant_info=participant_info)
-            print(f"🤖 Updating agent context for {participant_info['name']}")
-            await session.update_agent(new_agent)
         
-        asyncio.create_task(update_task())
+        participant_info = {'name': participant.name or participant.identity}
+        new_agent = OmniAgent(participant_info=participant_info)
+        print(f"🤖 Updating agent context for {participant_info['name']}")
+        session.update_agent(new_agent)
 
     def on_participant_disconnected(participant):
         print("\n👋 PARTICIPANT LEFT!")
         print_participant_info(participant)
-
-        async def update_task():
-            print("🤖 Resetting agent to default state.")
-            await session.update_agent(OmniAgent())
-
-        asyncio.create_task(update_task())
+        
+        print("🤖 Resetting agent to default state.")
+        session.update_agent(OmniAgent())
 
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
@@ -230,7 +229,7 @@ async def entrypoint(ctx: JobContext):
     print_participant_info(ctx.room.local_participant, is_local=True)
 
     await session.start(
-        ctx.room,
+        room=ctx.room,
         agent=agent,
         room_input_options=RoomInputOptions(video_enabled=True, close_on_disconnect=False)
     )
