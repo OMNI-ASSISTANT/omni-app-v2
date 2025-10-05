@@ -153,7 +153,7 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni with video search capabilities."""
     
-    def __init__(self):
+    def __init__(self, participant_info=None):
         # Determine if running on Railway
         RUNNING_ON_RAILWAY = any(
             env in os.environ for env in (
@@ -170,8 +170,8 @@ class OmniAgent(Agent):
             web_search, 
         ]
 
-        super().__init__(
-            instructions="""You are **Omni**, a hyper-proactive assistant with external tools.
+        # Build dynamic system prompt with participant info
+        base_instructions = """You are **Omni**, a hyper-proactive assistant with external tools.
                 • Think briefly before acting; be concise and helpful.
                 • Reply to the user in ≤ 2 sentences and suggest useful next steps when appropriate.
                 • Ask one clarifying question only if a critical detail is missing.
@@ -181,12 +181,40 @@ class OmniAgent(Agent):
                 • For video searches, use descriptive queries about visual content (e.g., "person holding bottle", "car driving", "window").
                 • Video searches extract key frames as images that I can see and analyze - perfect for understanding visual content!
                 • When users mention videos, proactively search to extract and analyze the visual frames.
-                • Always confirm destructive actions before proceeding.
-            """,
+                • Always confirm destructive actions before proceeding."""
+        
+        # Add participant context if available
+        if participant_info:
+            participant_context = f"""
+                
+                **CURRENT USER CONTEXT:**
+                • User Name: {participant_info.get('name', 'Not provided')}
+                • User Identity: {participant_info.get('identity', 'Unknown')}
+                • Connection State: {participant_info.get('state', 'Unknown')}
+                • User Type: {participant_info.get('kind_name', 'Standard User')}
+                • Has Audio: {participant_info.get('has_audio', False)}
+                • Has Video: {participant_info.get('has_video', False)}
+                
+                Use this context to personalize your responses and be more helpful!"""
+            base_instructions += participant_context
+
+        super().__init__(
+            instructions=base_instructions,
             tools=tool_list,
             llm=google.beta.realtime.RealtimeModel(),
         )
 
+
+def get_participant_kind_name(kind):
+    """Convert participant kind number to readable name."""
+    kind_map = {
+        0: "Standard User",
+        1: "Ingress",
+        2: "Egress", 
+        3: "SIP",
+        4: "Agent"
+    }
+    return kind_map.get(kind, f"Unknown ({kind})")
 
 def print_participant_info(participant, is_local=False):
     """Print detailed participant information."""
@@ -196,7 +224,7 @@ def print_participant_info(participant, is_local=False):
     print(f"  - Identity: {participant.identity}")
     print(f"  - Name: {participant.name or 'No name set'}")
     print(f"  - State: {getattr(participant, 'state', 'Unknown')}")
-    print(f"  - Kind: {getattr(participant, 'kind', 'Unknown')}")
+    print(f"  - Kind: {get_participant_kind_name(getattr(participant, 'kind', 0))}")
     print(f"  - Attributes: {getattr(participant, 'attributes', {}) or 'No attributes'}")
     print(f"  - Metadata: {participant.metadata or 'No metadata'}")
     print(f"  - Permissions: {getattr(participant, 'permissions', 'Unknown')}")
@@ -216,16 +244,39 @@ async def entrypoint(ctx: JobContext):
     # Connect to the room first
     await ctx.connect()
     
+    # Store agent reference for updates
+    current_agent = None
+    
     # Set up event listeners for participant events
     @ctx.room.on("participant_connected")
     def on_participant_connected(participant):
+        nonlocal current_agent
         print(f"\n🎉 NEW PARTICIPANT JOINED THE ROOM!")
         print_participant_info(participant, is_local=False)
         
+        # Extract participant info for system prompt
+        participant_info = {
+            'name': participant.name or participant.identity,
+            'identity': participant.identity,
+            'state': getattr(participant, 'state', 'JOINED'),
+            'kind_name': get_participant_kind_name(getattr(participant, 'kind', 0)),
+            'has_audio': any(pub.kind == 'audio' for pub in participant.track_publications.values()),
+            'has_video': any(pub.kind == 'video' for pub in participant.track_publications.values())
+        }
+        
+        # Create new agent with participant context
+        print(f"🤖 Updating Omni with user context: {participant_info['name']}")
+        current_agent = OmniAgent(participant_info=participant_info)
+        
     @ctx.room.on("participant_disconnected") 
     def on_participant_disconnected(participant):
+        nonlocal current_agent
         print(f"\n👋 PARTICIPANT LEFT THE ROOM!")
         print_participant_info(participant, is_local=False)
+        
+        # Reset to default agent when user leaves
+        print(f"🤖 Resetting Omni to default state")
+        current_agent = OmniAgent()
         
     @ctx.room.on("track_published")
     def on_track_published(publication, participant):
@@ -254,8 +305,9 @@ async def entrypoint(ctx: JobContext):
         logger.error("Then add this line to your .env file: GOOGLE_API_KEY=your-api-key-here")
         raise ValueError("GOOGLE_API_KEY environment variable is required for Gemini Live API")
         
-    # Create the agent
+    # Create the initial agent
     agent = OmniAgent()
+    current_agent = agent
     
     # Store agent reference in job context for tool access
     ctx._agent = agent
