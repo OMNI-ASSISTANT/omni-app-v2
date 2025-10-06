@@ -268,6 +268,8 @@ class OmniAgent(Agent):
             instructions=instructions,
             tools=tool_list,
             llm=google.beta.realtime.RealtimeModel(
+                # Use gemini-live-2.5-flash-preview which supports Google Search
+                model="gemini-live-2.5-flash-preview",
                 # Default to a British-accent voice; override with OMNI_VOICE env var
                 voice=os.getenv("OMNI_VOICE", "Puck"),
                 # Set BCP-47 language tag (e.g., en-GB) for STT/TTS
