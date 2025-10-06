@@ -26,7 +26,7 @@ from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunCon
 from livekit.plugins import google
 from eleven import call_user
 from google.genai import types
-
+import time
 # ───────── ENV & LOG ─────────
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -44,38 +44,18 @@ async def get_user_info(
 ) -> str:
     """Get information about the current user in the room."""
     global current_user_info
+    #wait a second
+
     print(f"Getting user info for: {current_user_info}")
-    
-    # Try to get participant info from room context if global is None
-    if not current_user_info:
-        try:
-            # Get the first connected participant from the room
-            participants = list(context.room.remote_participants.values())
-            if participants:
-                participant = participants[0]  # Get first participant
-                current_user_info = {
-                    "name": participant.name or participant.identity,
-                    "identity": participant.identity,
-                    "sid": participant.sid,
-                    "state": getattr(participant, 'state', 'Unknown'),
-                    "kind": getattr(participant, 'kind', 'Unknown')
-                }
-                print(f"✅ Retrieved user info from room context: {current_user_info}")
-        except Exception as e:
-            print(f"Could not get participant from room context: {e}")
-    
-    if current_user_info:
-        logger.info(f"User info retrieved: {current_user_info}")
-        try:
+    while True:
+        if current_user_info:
+            logger.info(f"User info retrieved: {current_user_info}")
             from upstash_redis import Redis
             redis = Redis.from_env()
             memory = redis.get(current_user_info["identity"])
-            return f"User information: {str(current_user_info) + ' Memories: ' + str(memory)}"
-        except Exception as e:
-            print(f"Could not retrieve memories: {e}")
-            return f"User information: {str(current_user_info)} (no memories available)"
-    else:
-        return "No user information available. Please wait for a user to join."
+            return f"User information: {str(current_user_info) + "Memories: " + str(memory)}"
+        else:
+            time.sleep(1)
 
 @function_tool
 async def add_memory(
@@ -251,7 +231,8 @@ class OmniAgent(Agent):
             "You are Omni, a helpful AI assistant. "
             "When a user joins the room, use the get_user_info tool to find out their name and other details. "
             "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
-            "Use the add_memory tool to add memories to the user, even when not directly prompted."
+            "Start conversations by calling get_user_info to learn about the user."
+            " Use the add_memory tool to add memories to the user, even when not directly prompted."
             " Always speak in British English (en-GB) with a natural UK accent and use UK spelling."
         )
 
@@ -303,6 +284,7 @@ async def entrypoint(ctx: JobContext):
         current_user_info = None
         print("🔄 Cleared user info")
 
+    # Register event handlers BEFORE starting the session
     ctx.room.on("participant_connected", on_participant_connected)
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
