@@ -18,3 +18,4 @@ langchain
 langchain-community
 ddgs
 upstash-redis
+flask

@@ -24,7 +24,7 @@ from typing import Annotated
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, Agent, AgentSession, RoomInputOptions
 from livekit.plugins import google
-from eleven import call_user
+from eleven import call_user, get_call_summaries, get_recent_call_summaries
 from google.genai import types
 import time
 # ───────── ENV & LOG ─────────
@@ -96,6 +96,44 @@ async def send_call_agent(
     """Initiate a phone call using ElevenLabs conversational AI agent."""
     logger.info(f"Initiating call to {to_number} with agent {goal} {user}")
     return call_user(goal=goal, user=user, phone_number=to_number)
+
+
+@function_tool()
+async def get_call_history(
+    context: RunContext,
+    user_identity: Annotated[str, "User identity to retrieve call history for (optional - uses current user if not provided)"] = None,
+    limit: Annotated[int, "Maximum number of calls to retrieve (default: 5)"] = 5,
+) -> str:
+    """Retrieve call history and summaries from previous ElevenLabs calls for a specific user."""
+    global current_user_info
+    
+    # Use current user if no user_identity provided
+    if not user_identity and current_user_info:
+        user_identity = current_user_info["identity"]
+    elif not user_identity:
+        return "No user identity provided and no current user found."
+    
+    logger.info(f"Retrieving call history for: {user_identity}")
+    
+    summaries = get_call_summaries(user_identity, limit)
+    
+    if not summaries:
+        return f"No call history found for {user_identity}."
+    
+    # Format the summaries for display
+    result = f"Call history for {user_identity} ({len(summaries)} calls):\n\n"
+    for idx, call in enumerate(summaries, 1):
+        result += f"Call {idx}:\n"
+        result += f"  Goal: {call.get('goal', 'N/A')}\n"
+        result += f"  Status: {call.get('status', 'N/A')}\n"
+        result += f"  Duration: {call.get('duration', 0)} seconds\n"
+        result += f"  Summary: {call.get('summary', 'No summary available')}\n"
+        result += f"  Completed: {call.get('completed_at', 'N/A')}\n"
+        if call.get('transcript'):
+            result += f"  Transcript: {call.get('transcript')[:200]}...\n"
+        result += "\n"
+    
+    return result
 
 
 @function_tool()
@@ -225,7 +263,7 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
     def __init__(self):
-        tool_list = [get_user_info, send_call_agent, search_videos, web_search, add_memory]
+        tool_list = [get_user_info, send_call_agent, get_call_history, search_videos, web_search, add_memory]
         
         instructions = (
             "You are Omni, a helpful AI assistant. "
