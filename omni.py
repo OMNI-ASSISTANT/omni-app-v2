@@ -8,7 +8,7 @@ Features:
 * LiveKit Agents with built-in Gemini Live API
 * Automatic audio streaming and room management
 * All original tool functions preserved
-* Built-in Google Search grounding
+* Web search capability via DuckDuckGo API
 * Production-ready for Railway deployment
 """
 import asyncio
@@ -72,6 +72,45 @@ async def add_memory(
         current_memory = memory
     redis.set(current_user_info["identity"], current_memory)
     return "Memory added successfully."
+
+@function_tool
+async def web_search(
+    context: "RunContext",
+    query: Annotated[str, "The search query to look up on the web"],
+) -> str:
+    """Search the web for current information and return results."""
+    logger.info(f"Searching web for: {query}")
+    try:
+        import requests
+        # Use a simple search API or scraping service
+        # For now, using DuckDuckGo's instant answer API
+        url = f"https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": 1,
+            "skip_disambig": 1
+        }
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            abstract = data.get("Abstract", "")
+            if abstract:
+                return abstract
+            # Try related topics
+            related = data.get("RelatedTopics", [])
+            if related and len(related) > 0:
+                results = []
+                for item in related[:3]:
+                    if isinstance(item, dict) and "Text" in item:
+                        results.append(item["Text"])
+                if results:
+                    return "\n\n".join(results)
+            return "No relevant information found for this query."
+        return "Search failed - please try again."
+    except Exception as e:
+        logger.error(f"Web search error: {e}")
+        return f"Search error: {str(e)}"
 
 @function_tool()
 async def send_call_agent(
@@ -250,32 +289,25 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
     def __init__(self):
-        tool_list = [get_user_info, send_call_agent, get_call_history, search_videos, add_memory]
+        tool_list = [get_user_info, send_call_agent, get_call_history, search_videos, add_memory, web_search]
         instructions = (
             "You are Omni, a helpful AI assistant. "
             "When a user joins the room, use the get_user_info tool to find out their name and other details. "
             "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
             "Start conversations by calling get_user_info to learn about the user. "
             "Use the add_memory tool to add memories to the user, even when not directly prompted. "
-            "You have access to Google Search for real-time information from the web. "
+            "You have access to web search for real-time information. Use the web_search tool when you need current information. "
             "Always speak in British English (en-GB) with a natural UK accent and use UK spelling."
         )
-
-        # Enable built-in Google Search grounding
-        gemini_tools = [types.GoogleSearch()]
 
         super().__init__(
             instructions=instructions,
             tools=tool_list,
             llm=google.beta.realtime.RealtimeModel(
-                # Use gemini-live-2.5-flash-preview which supports Google Search
-                model="gemini-live-2.5-flash-preview",
                 # Default to a British-accent voice; override with OMNI_VOICE env var
                 voice=os.getenv("OMNI_VOICE", "Puck"),
                 # Set BCP-47 language tag (e.g., en-GB) for STT/TTS
                 language=os.getenv("OMNI_LANGUAGE", "en-GB"),
-                # Add Google Search as a built-in tool
-                _gemini_tools=gemini_tools,
             ),
         )
 
