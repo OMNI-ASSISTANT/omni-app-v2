@@ -289,6 +289,24 @@ async def entrypoint(ctx: JobContext):
     ctx.room.on("participant_disconnected", on_participant_disconnected)
 
     print(f"🏠 Agent is in the room, waiting for users...")
+    
+    # Check for participants already in the room
+    print(f"🔍 Checking for existing participants...")
+    print(f"   Room name: {ctx.room.name}")
+    print(f"   Room SID: {ctx.room.sid if hasattr(ctx.room, 'sid') else 'N/A'}")
+    
+    # Try to access remote participants
+    if hasattr(ctx.room, 'remote_participants'):
+        print(f"   Remote participants: {len(ctx.room.remote_participants)}")
+        for participant in ctx.room.remote_participants.values():
+            print(f"   Found existing participant: {participant.identity}")
+            on_participant_connected(participant)
+    else:
+        print(f"   No remote_participants attribute found")
+        
+    # Also check all participants
+    if hasattr(ctx.room, 'participants'):
+        print(f"   All participants: {ctx.room.participants}")
 
     await session.start(
         room=ctx.room,
