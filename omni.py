@@ -81,36 +81,44 @@ async def web_search(
     """Search the web for current information and return results."""
     logger.info(f"Searching web for: {query}")
     try:
-        import requests
-        # Use a simple search API or scraping service
-        # For now, using DuckDuckGo's instant answer API
-        url = f"https://api.duckduckgo.com/"
-        params = {
-            "q": query,
-            "format": "json",
-            "no_html": 1,
-            "skip_disambig": 1
-        }
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            abstract = data.get("Abstract", "")
-            if abstract:
-                return abstract
-            # Try related topics
-            related = data.get("RelatedTopics", [])
-            if related and len(related) > 0:
-                results = []
-                for item in related[:3]:
-                    if isinstance(item, dict) and "Text" in item:
-                        results.append(item["Text"])
-                if results:
-                    return "\n\n".join(results)
-            return "No relevant information found for this query."
-        return "Search failed - please try again."
+        from exa_py import Exa
+
+        exa = Exa(api_key="8e667dfa-c286-4915-993a-ba373995ffc7")
+
+        result = exa.search_and_contents(
+            query,
+            text=True,
+            type="keyword",
+            num_results=3
+        )
+        
+        # Format the results into a readable string
+        if not result.results:
+            return "No search results found for this query."
+        
+        formatted_results = []
+        for idx, item in enumerate(result.results, 1):
+            title = getattr(item, 'title', 'No title')
+            text = getattr(item, 'text', '')
+            url = getattr(item, 'url', '')
+            
+            # Truncate text to a reasonable length
+            if text and len(text) > 500:
+                text = text[:500] + "..."
+            
+            result_text = f"Result {idx}: {title}\n"
+            if text:
+                result_text += f"{text}\n"
+            if url:
+                result_text += f"Source: {url}"
+            
+            formatted_results.append(result_text)
+        
+        return "\n\n".join(formatted_results)
+    
     except Exception as e:
         logger.error(f"Web search error: {e}")
-        return f"Search error: {str(e)}"
+        return f"Search error: {str(e)}. Please try rephrasing your query."
 
 @function_tool()
 async def send_call_agent(
