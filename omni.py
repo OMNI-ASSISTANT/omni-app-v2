@@ -20,6 +20,7 @@ import json
 import pathlib
 import sys
 from typing import Annotated
+from datetime import datetime
 
 from dotenv import load_dotenv
 from livekit.agents import JobContext, WorkerOptions, cli, function_tool, RunContext, Agent, AgentSession, RoomInputOptions
@@ -78,76 +79,31 @@ async def add_memory(
     return "Memory added successfully."
 
 @function_tool
-async def get_current_time(
-    context: "RunContext",
-    timezone: Annotated[str, "Timezone name (e.g., 'America/New_York', 'Europe/London', 'UTC'). Defaults to UTC."] = "UTC",
-) -> str:
-    """Get the current date and time for a specific timezone."""
-    try:
-        from datetime import datetime
-        import pytz
-        
-        # Get current time in specified timezone
-        tz = pytz.timezone(timezone)
-        current_time = datetime.now(tz)
-        
-        # Format the output
-        formatted_time = current_time.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
-        return f"Current time in {timezone}: {formatted_time}"
-    
-    except Exception as e:
-        logger.error(f"Time query error: {e}")
-        # Fallback to UTC
-        from datetime import datetime
-        utc_time = datetime.utcnow().strftime("%A, %B %d, %Y at %I:%M:%S %p UTC")
-        return f"Current UTC time: {utc_time}"
-
-@function_tool
 async def web_search(
     context: "RunContext",
     query: Annotated[str, "The search query to look up on the web"],
+    topic: Annotated[str, "The topic of the search - general, or if recent info needed, use news. Nothing else or will error. Must be 'general' or 'news.' "],
 ) -> str:
     """Search the web for current information and return results."""
     logger.info(f"Searching web for: {query}")
-    try:
-        from exa_py import Exa
+    print(topic)
+    from tavily import TavilyClient
+    client = TavilyClient("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")
+    response = client.search(
+        query=query,
+        topic=topic
+    )
+    return response
 
-        exa = Exa(api_key="8e667dfa-c286-4915-993a-ba373995ffc7")
-
-        result = exa.search_and_contents(
-            query,
-            text=True,
-            type="keyword",
-            num_results=3
-        )
-        
-        # Format the results into a readable string
-        if not result.results:
-            return "No search results found for this query."
-        
-        formatted_results = []
-        for idx, item in enumerate(result.results, 1):
-            title = getattr(item, 'title', 'No title')
-            text = getattr(item, 'text', '')
-            url = getattr(item, 'url', '')
-            
-            # Truncate text to a reasonable length
-            if text and len(text) > 500:
-                text = text[:500] + "..."
-            
-            result_text = f"Result {idx}: {title}\n"
-            if text:
-                result_text += f"{text}\n"
-            if url:
-                result_text += f"Source: {url}"
-            
-            formatted_results.append(result_text)
-        
-        return "\n\n".join(formatted_results)
-    
-    except Exception as e:
-        logger.error(f"Web search error: {e}")
-        return f"Search error: {str(e)}. Please try rephrasing your query."
+@function_tool
+async def get_current_datetime(
+    context: "RunContext",
+) -> str:
+    """Get the current date and time."""
+    now = datetime.now()
+    formatted_datetime = now.strftime("%A, %B %d, %Y at %I:%M:%S %p")
+    logger.info(f"Current date and time: {formatted_datetime}")
+    return f"The current date and time is {formatted_datetime}"
 
 @function_tool()
 async def send_call_agent(
@@ -326,16 +282,17 @@ async def search_videos(
 class OmniAgent(Agent):
     """Custom Agent class for Omni."""
     def __init__(self):
-        tool_list = [get_user_info, send_call_agent, get_call_history, search_videos, add_memory, web_search, get_current_time]
+        tool_list = [get_user_info, send_call_agent, get_call_history, search_videos, add_memory, web_search, get_current_datetime]
         instructions = (
             "You are Omni, a helpful AI assistant. "
             "When a user joins the room, use the get_user_info tool to find out their name and other details. "
             "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
             "Start conversations by calling get_user_info to learn about the user. "
             "Use the add_memory tool to add memories to the user, even when not directly prompted. "
-            "You have access to web search for real-time information and get_current_time for accurate time/date queries. "
-            "For time-related questions, always use get_current_time instead of web search. "
+            "You have access to web search for real-time information. Use the web_search tool when you need current information. "
             "Always speak in British English (en-GB) with a natural UK accent and use UK spelling."
+            "If the user asks for recent information, use the web_search tool with the topic 'news', otherwise use the topic 'general'."
+            "If you use any other topic, the tool will error."
         )
 
         super().__init__(
