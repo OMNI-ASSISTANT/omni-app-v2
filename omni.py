@@ -165,6 +165,8 @@ async def search_videos(
     """Search for videos using AI-powered vector database and extract key frames as images for Gemini Live."""
     logger.info(f"Searching videos for: {query}")
     
+    global current_user_info
+    
     try:
         import requests
         import cv2
@@ -176,17 +178,37 @@ async def search_videos(
     except ImportError as e:
         return f"Error: Required library not available: {str(e)}"
     
-    api_base_url = "https://macbook-pro.tail1dc532.ts.net"
+    # Get user email from current user info
+    if not current_user_info or not current_user_info.get("identity"):
+        return "Error: User identity not available. Cannot perform video search."
     
-    # Check API health and perform search
-    health_response = requests.get(f"{api_base_url}/", timeout=10)
+    user_email = current_user_info["identity"]
+    api_base_url = "http://localhost:9999"
+    
+    # Check API health with email parameter
+    health_response = requests.get(f"{api_base_url}/?email={user_email}", timeout=10)
     if health_response.status_code == 200:
         health_data = health_response.json()
         if not health_data.get("model_loaded", False):
-            return "Video search unavailable - AI model not loaded."
+            # Try to warmup the model for this user
+            logger.info(f"Model not loaded for {user_email}, calling warmup...")
+            warmup_response = requests.post(
+                f"{api_base_url}/warmup",
+                headers={"Content-Type": "application/json"},
+                json={"email": user_email},
+                timeout=10
+            )
+            if warmup_response.status_code == 200:
+                return "Video search is initializing for your account. This takes 1-2 minutes. Please try again shortly."
+            else:
+                return "Video search unavailable - AI model not loaded and warmup failed."
     
-    # Search for videos
-    search_data = {"query": query, "top_k": min(top_k, 10)}
+    # Search for videos with email
+    search_data = {
+        "email": user_email,
+        "query": query,
+        "top_k": min(top_k, 10)
+    }
     response = requests.post(
         f"{api_base_url}/search",
         headers={"Content-Type": "application/json"},
@@ -286,13 +308,15 @@ class OmniAgent(Agent):
         instructions = (
             "You are Omni, a helpful AI assistant. "
             "When a user joins the room, use the get_user_info tool to find out their name and other details. "
+            "Never wait, always call get_user_info immediately, as the first thing you do."
             "Always greet users by their name when you know it. Be helpful, concise, and friendly. "
-            "Start conversations by calling get_user_info to learn about the user. "
             "Use the add_memory tool to add memories to the user, even when not directly prompted. "
             "You have access to web search for real-time information. Use the web_search tool when you need current information. "
             "Always speak in British English (en-GB) with a natural UK accent and use UK spelling."
             "If the user asks for recent information, use the web_search tool with the topic 'news', otherwise use the topic 'general'."
             "If you use any other topic, the tool will error."
+            "Be extremly proactive - never ask for confirmation, and proactively call web search and add_memory tools when appropriate."
+            "Often when the user is talking about something that happened in the past, they want you to use search_videos to find out more information."
         )
 
         super().__init__(
