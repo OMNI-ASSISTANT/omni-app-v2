@@ -163,7 +163,8 @@ async def search_videos(
     top_k: Annotated[int, "Number of top results to return (default: 3)"] = 3
 ) -> str:
     """Search for videos using AI-powered vector database and extract key frames as images for Gemini Live."""
-    logger.info(f"Searching videos for: {query}")
+    logger.info(f"🎬 SEARCH START: Query='{query}', Question='{question}', top_k={top_k}")
+    print(f"🎬 SEARCH START: Query='{query}', Question='{question}', top_k={top_k}")
     
     global current_user_info
     
@@ -176,32 +177,53 @@ async def search_videos(
         from livekit.agents.llm import ImageContent
         from livekit.agents import get_job_context
     except ImportError as e:
-        return f"Error: Required library not available: {str(e)}"
+        error_msg = f"Error: Required library not available: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        return error_msg
     
     # Get user email from current user info
     if not current_user_info or not current_user_info.get("identity"):
-        return "Error: User identity not available. Cannot perform video search."
+        error_msg = "Error: User identity not available. Cannot perform video search."
+        logger.error(f"❌ {error_msg}")
+        return error_msg
     
     user_email = current_user_info["identity"]
     api_base_url = "http://localhost:9999"
+    logger.info(f"📧 Using email: {user_email}")
+    print(f"📧 Using email: {user_email}")
     
     # Check API health with email parameter
-    health_response = requests.get(f"{api_base_url}/?email={user_email}", timeout=10)
-    if health_response.status_code == 200:
-        health_data = health_response.json()
-        if not health_data.get("model_loaded", False):
-            # Try to warmup the model for this user
-            logger.info(f"Model not loaded for {user_email}, calling warmup...")
-            warmup_response = requests.post(
-                f"{api_base_url}/warmup",
-                headers={"Content-Type": "application/json"},
-                json={"email": user_email},
-                timeout=10
-            )
-            if warmup_response.status_code == 200:
-                return "Video search is initializing for your account. This takes 1-2 minutes. Please try again shortly."
-            else:
-                return "Video search unavailable - AI model not loaded and warmup failed."
+    try:
+        health_response = requests.get(f"{api_base_url}/?email={user_email}", timeout=10)
+        logger.info(f"🏥 Health check: {health_response.status_code}")
+        print(f"🏥 Health check: {health_response.status_code}")
+        
+        if health_response.status_code == 200:
+            health_data = health_response.json()
+            logger.info(f"🏥 Health data: {health_data}")
+            print(f"🏥 Health data: {health_data}")
+            
+            if not health_data.get("model_loaded", False):
+                # Try to warmup the model for this user
+                logger.info(f"🔥 Model not loaded for {user_email}, calling warmup...")
+                print(f"🔥 Model not loaded for {user_email}, calling warmup...")
+                warmup_response = requests.post(
+                    f"{api_base_url}/warmup",
+                    headers={"Content-Type": "application/json"},
+                    json={"email": user_email},
+                    timeout=10
+                )
+                if warmup_response.status_code == 200:
+                    msg = "Video search is initializing for your account. This takes 1-2 minutes. Please try again shortly."
+                    logger.info(f"✅ {msg}")
+                    return msg
+                else:
+                    msg = "Video search unavailable - AI model not loaded and warmup failed."
+                    logger.error(f"❌ {msg}")
+                    return msg
+    except Exception as e:
+        logger.error(f"❌ Health check failed: {e}")
+        print(f"❌ Health check failed: {e}")
     
     # Search for videos with email
     search_data = {
@@ -209,92 +231,183 @@ async def search_videos(
         "query": query,
         "top_k": min(top_k, 10)
     }
-    response = requests.post(
-        f"{api_base_url}/search",
-        headers={"Content-Type": "application/json"},
-        json=search_data,
-        timeout=30
-    )
-    import time
-    if response.status_code != 200:
-        return f"Video search failed: {response.status_code}"
-        
-    results = response.json().get("results", [])
-    if not results:
-        return f"No videos found matching '{query}'. Try different terms like 'person', 'car', 'window'."
+    logger.info(f"🔍 Searching with data: {search_data}")
+    print(f"🔍 Searching with data: {search_data}")
     
-    # Get best match and extract frames
-    best_match = results[0]
-    filename = best_match.get("filename", "Unknown")
-    similarity_percent = round(best_match.get("similarity", 0) * 100, 1)
-    video_url = f"{api_base_url}/vids/{filename}"
-
-    # Download the video file and save it to disk
-    video_response = requests.get(video_url, timeout=60)
-    video_path = filename
-    with open(video_path, "wb") as f:
-        f.write(video_response.content)
-
-    if video_response.status_code != 200:
-        print(f"Found video '{filename}' but couldn't download it.")
-
-    #ask gemini what the video is about/what it shows thru question
-    from google import genai
-    from google.genai import types
-    import dotenv
-    dotenv.load_dotenv()
-    # Prefer env var, fallback to .env key if present
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        try:
-            api_key = dotenv.get_key(".env", "GOOGLE_API_KEY")
-        except Exception:
-            api_key = None
-    if not api_key:
-        return "Error: GOOGLE_API_KEY not configured. Set env var or .env."
-
-    client = genai.Client(api_key=api_key)
-    uploaded_file = client.files.upload(file=video_path)
-
-    # Wait for the uploaded file to become ACTIVE
-    max_wait_seconds = 60
-    start_time = time.time()
-    active_file = None
-    while time.time() - start_time < max_wait_seconds:
-        try:
-            f = client.files.get(name=getattr(uploaded_file, "name", None) or getattr(uploaded_file, "id", None))
-            state = getattr(f, "state", None)
-            # state may be literal "ACTIVE" or object with name
-            state_name = getattr(state, "name", state)
-            if state_name == "ACTIVE":
-                active_file = f
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-
-    if not active_file:
-        return "Error: Uploaded file did not become ACTIVE in time. Try again."
-
     try:
-        response = client.models.generate_content(
-            model='models/gemini-2.5-flash',
-            contents=['Answer the following question based on the video: ' + question, active_file]
+        response = requests.post(
+            f"{api_base_url}/search",
+            headers={"Content-Type": "application/json"},
+            json=search_data,
+            timeout=30
         )
-    except Exception as e:
-        # Common transient errors include quota or file state races
-        return f"Error generating analysis: {e}"
+        logger.info(f"🔍 Search response status: {response.status_code}")
+        print(f"🔍 Search response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            error_msg = f"Video search failed with status {response.status_code}: {response.text}"
+            logger.error(f"❌ {error_msg}")
+            print(f"❌ {error_msg}")
+            return error_msg
+        
+        response_json = response.json()
+        logger.info(f"🔍 Search response JSON: {response_json}")
+        print(f"🔍 Search response JSON: {response_json}")
+        
+        results = response_json.get("results", [])
+        logger.info(f"📊 Found {len(results)} results")
+        print(f"📊 Found {len(results)} results")
+        
+        if not results:
+            msg = f"No videos found matching '{query}'. Try different terms like 'person', 'car', 'window'."
+            logger.warning(f"⚠️ {msg}")
+            print(f"⚠️ {msg}")
+            return msg
+        
+        # Get best match and extract frames
+        best_match = results[0]
+        filename = best_match.get("filename", "Unknown")
+        similarity_percent = round(best_match.get("similarity", 0) * 100, 1)
+        video_url = f"{api_base_url}/vids/{filename}"
+        
+        logger.info(f"🎯 Best match: {filename} ({similarity_percent}% similarity)")
+        print(f"🎯 Best match: {filename} ({similarity_percent}% similarity)")
 
-    video_summary = getattr(response, "text", None) or ""
-    print(video_summary)
-    #delete video file
-    os.remove(video_path)
-    #delete video temp file
-    try:
-        client.files.delete(name=getattr(active_file, "name", None) or getattr(active_file, "id", None))
-    except Exception:
-        pass
-    return video_summary
+        # Download the video file and save it to disk
+        logger.info(f"⬇️ Downloading video from {video_url}")
+        print(f"⬇️ Downloading video from {video_url}")
+        
+        video_response = requests.get(video_url, timeout=60)
+        
+        if video_response.status_code != 200:
+            error_msg = f"Found video '{filename}' but couldn't download it. Status: {video_response.status_code}"
+            logger.error(f"❌ {error_msg}")
+            print(f"❌ {error_msg}")
+            return error_msg
+        
+        video_path = filename
+        with open(video_path, "wb") as f:
+            f.write(video_response.content)
+        
+        logger.info(f"💾 Saved video to {video_path} ({len(video_response.content)} bytes)")
+        print(f"💾 Saved video to {video_path} ({len(video_response.content)} bytes)")
+
+        #ask gemini what the video is about/what it shows thru question
+        from google import genai
+        from google.genai import types
+        import dotenv
+        dotenv.load_dotenv()
+        
+        # Prefer env var, fallback to .env key if present
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            try:
+                api_key = dotenv.get_key(".env", "GOOGLE_API_KEY")
+            except Exception:
+                api_key = None
+        if not api_key:
+            error_msg = "Error: GOOGLE_API_KEY not configured. Set env var or .env."
+            logger.error(f"❌ {error_msg}")
+            return error_msg
+
+        logger.info(f"🤖 Uploading video to Gemini...")
+        print(f"🤖 Uploading video to Gemini...")
+        
+        client = genai.Client(api_key=api_key)
+        uploaded_file = client.files.upload(file=video_path)
+        
+        logger.info(f"📤 Video uploaded, waiting for ACTIVE state...")
+        print(f"📤 Video uploaded, waiting for ACTIVE state...")
+
+        # Wait for the uploaded file to become ACTIVE
+        import time
+        max_wait_seconds = 60
+        start_time = time.time()
+        active_file = None
+        while time.time() - start_time < max_wait_seconds:
+            try:
+                f = client.files.get(name=getattr(uploaded_file, "name", None) or getattr(uploaded_file, "id", None))
+                state = getattr(f, "state", None)
+                # state may be literal "ACTIVE" or object with name
+                state_name = getattr(state, "name", state)
+                logger.info(f"⏳ File state: {state_name}")
+                if state_name == "ACTIVE":
+                    active_file = f
+                    logger.info(f"✅ File is ACTIVE!")
+                    print(f"✅ File is ACTIVE!")
+                    break
+            except Exception as e:
+                logger.warning(f"⚠️ Error checking file state: {e}")
+            time.sleep(1)
+
+        if not active_file:
+            error_msg = "Error: Uploaded file did not become ACTIVE in time. Try again."
+            logger.error(f"❌ {error_msg}")
+            print(f"❌ {error_msg}")
+            # Clean up
+            try:
+                os.remove(video_path)
+            except:
+                pass
+            return error_msg
+
+        logger.info(f"🧠 Generating content with question: {question}")
+        print(f"🧠 Generating content with question: {question}")
+        
+        try:
+            response = client.models.generate_content(
+                model='models/gemini-2.5-flash',
+                contents=['Answer the following question based on the video: ' + question, active_file]
+            )
+            
+            video_summary = getattr(response, "text", None) or ""
+            logger.info(f"✅ Generated summary ({len(video_summary)} chars): {video_summary[:100]}...")
+            print(f"✅ Generated summary ({len(video_summary)} chars): {video_summary[:100]}...")
+            print(f"📝 FULL SUMMARY: {video_summary}")
+            
+        except Exception as e:
+            # Common transient errors include quota or file state races
+            error_msg = f"Error generating analysis: {e}"
+            logger.error(f"❌ {error_msg}")
+            print(f"❌ {error_msg}")
+            # Clean up
+            try:
+                os.remove(video_path)
+            except:
+                pass
+            try:
+                client.files.delete(name=getattr(active_file, "name", None) or getattr(active_file, "id", None))
+            except:
+                pass
+            return error_msg
+
+        # Clean up
+        logger.info(f"🧹 Cleaning up files...")
+        print(f"🧹 Cleaning up files...")
+        try:
+            os.remove(video_path)
+            logger.info(f"🗑️ Deleted local video file")
+        except Exception as e:
+            logger.warning(f"⚠️ Couldn't delete local file: {e}")
+        
+        try:
+            client.files.delete(name=getattr(active_file, "name", None) or getattr(active_file, "id", None))
+            logger.info(f"🗑️ Deleted Gemini uploaded file")
+        except Exception as e:
+            logger.warning(f"⚠️ Couldn't delete Gemini file: {e}")
+        
+        logger.info(f"🎉 SEARCH COMPLETE! Returning summary.")
+        print(f"🎉 SEARCH COMPLETE! Returning: {video_summary}")
+        
+        return video_summary
+        
+    except Exception as e:
+        error_msg = f"Video search error: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        print(f"❌ {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return error_msg
     #| GET | `/vids/{filename}` | Stream individual video for playback | None |
 
 
